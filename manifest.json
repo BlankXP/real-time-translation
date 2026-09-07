@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "BPFlow 实时翻译",
+  "version": "1.2.0",
+  "description": "沉浸式网页实时翻译：双语对照 / 按需替换 / 悬停查看，视频 CC 字幕与直播语音实时双语字幕。支持自选翻译引擎与 AI 模型（OpenAI 兼容 / DeepSeek / Kimi / GLM / DeepL / Bing / Google）与 Whisper 语音转写。",
+  "minimum_chrome_version": "110",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "BPFlow 实时翻译",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background/background.js"
+  },
+  "options_page": "options/options.html",
+  "permissions": ["storage", "unlimitedStorage", "contextMenus", "activeTab", "tabCapture", "offscreen"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": ["shared/langs.js", "shared/defaults.js", "content/content.js", "content/video.js"],
+      "css": ["content/content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "commands": {
+    "translate-page": {
+      "suggested_key": { "default": "Alt+Shift+Y" },
+      "description": "翻译 / 还原当前页面"
+    },
+    "live-captions": {
+      "suggested_key": { "default": "Alt+Shift+L" },
+      "description": "开始 / 停止直播字幕翻译"
+    }
+  }
+}

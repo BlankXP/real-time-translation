@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="jCkhPq1dmzWpGuEMemYYyS">
+<head data-page-node-id="CWCahSmrn0u6gDiAEP5pkA">
+  <meta charset="UTF-8" data-page-node-id="mojejfsYRB9Iqu8uaUU4sa">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="Cv8DzFOnYUGTWi7ltQ7vZN">
+  <title>设置 · BPFlow 实时翻译</title>
+  <link rel="stylesheet" href="options.css" data-page-node-id="VDbTMZCqCKZLyzj74F7Pdo">
+</head>
+<body data-page-node-id="E7z63XyccZtpDsU7TJdikM">
+  <div class="preview-badge hidden" id="preview-badge" data-page-node-id="nEwlvXKzFXlORDXDqacgJo">浏览器预览模式 · 数据仅存于本地 localStorage，安装扩展后生效</div>
+
+  <div class="page" data-page-node-id="t12bAMwqFWGCGjR2T5G4Kp">
+    <!-- ============ 侧边栏 ============ -->
+    <aside class="side" data-page-node-id="Fuho4qM6DVvVd9UEClpzFh">
+      <div class="side-brand" data-page-node-id="nN5XSp2gKyU3wD2SqA6U2y">
+        <span class="logo" data-page-node-id="2Vt3alGgLX1qG8A31kFOjC">译</span>
+        <div data-page-node-id="cZ4Qrc3wL5I39N5QfJk6sJ">
+          <div class="name" data-page-node-id="5pGE6cQ0Otd7M3sQ2Q7FMA">BPFlow</div>
+          <div class="sub" data-page-node-id="6fTDZgsEjPgLytp05H15Mf">实时翻译设置</div>
+        </div>
+      </div>
+      <nav class="nav" data-page-node-id="l4I1dYicZqfc1obQA5M485">
+        <button class="nav-item active" data-tab="engines" data-page-node-id="VZHGbNWlBnVqd4GWBaW1PB">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" data-page-node-id="mddipf50XF6f0l1tYtBw0Q"><rect x="3" y="3" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5" data-page-node-id="gR42FSm0KJtLJPlDGZHyNx"/><rect x="11" y="3" width="6" height="6" rx="3" stroke="currentColor" stroke-width="1.5" data-page-node-id="yGTrozh6hWsLDg2Q0QWd9T"/><rect x="3" y="11" width="6" height="6" rx="3" stroke="currentColor" stroke-width="1.5" data-page-node-id="c5YtSHolcp2Bxa1liMOZwD"/><rect x="11" y="11" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5" data-page-node-id="81ixvC08WVei5R3168LIXa"/></svg>
+          引擎模型
+        </button>
+        <button class="nav-item" data-tab="langs" data-page-node-id="yWMpHUWb6o5b6EMSsxcYZL">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" data-page-node-id="fxMea73uTblOgsOJKOdzsZ"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5" data-page-node-id="q3WDG7Ila1ggeUiElUw26C"/><path d="M3 10h14M10 3c2.5 2.4 2.5 11.6 0 14M10 3c-2.5 2.4-2.5 11.6 0 14" stroke="currentColor" stroke-width="1.4" data-page-node-id="8VjKFKsQZsxmLLmXwybZSu"/></svg>
+          语言
+        </button>
+        <button class="nav-item" data-tab="display" data-page-node-id="Nh1Rlts2aDDWM1CXjyBtzE">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" data-page-node-id="rcPlNdMwxRSHKyqCEuIVNg"><path d="M2.5 5.5h15M2.5 10h10M2.5 14.5h13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" data-page-node-id="cZ2XstKhNw2iQahuYrhor7"/></svg>
+          显示效果
+        </button>
+        <button class="nav-item" data-tab="video" data-page-node-id="1evz1ubYCvWFH354DXNU4X">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" data-page-node-id="lIzuhRSPMtaA7eJcexl7NM"><rect x="2" y="4.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.5" data-page-node-id="XvoRVsLrTE2Bk3IoOKmb3U"/><path d="M14 8.5l3.5-2v7l-3.5-2" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" data-page-node-id="oTB6Vu1HB713itzMbP5yFk"/></svg>
+          视频直播
+        </button>
+        <button class="nav-item" data-tab="advanced" data-page-node-id="iHnKnXWA8h2evhGKFCKWIW">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" data-page-node-id="BWIydhkUQLoJliKz1I2Iin"><path d="M4 7.5a3 3 0 0 1 0-3.5 3 3 0 0 1 4.5-1 3 3 0 0 1 3.5 0A3 3 0 0 1 16 4a3 3 0 0 1 0 3.5V16a1.5 1.5 0 0 1-3 0v-2H4z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" data-page-node-id="J4LlSno6g2TOrNijRUTscQ"/><circle cx="12.5" cy="12" r="0.9" fill="currentColor" data-page-node-id="aKRBfnqSKU3OazC1BGTpky"/></svg>
+          高级设置
+        </button>
+      </nav>
+      <div class="side-foot" data-page-node-id="EAntb694VkRaNeOWPUwkDN">
+        <span data-page-node-id="smkLnmsDP2QIYgINwhdUbj">v<span id="ver" data-page-node-id="GvmkFtCvVpENQi3LSnVPws">1.0.0</span></span>
+        <span class="dot-sep" data-page-node-id="j6NcSFUOmRtsiUC7AI9c0V"></span>
+        <span data-page-node-id="dQSwg5rEQa5GCCm4wwpl5N">blank_xp</span>
+      </div>
+    </aside>
+
+    <!-- ============ 内容区 ============ -->
+    <main class="content" data-page-node-id="hAobfjNrBEHNzEOrATlbgZ">
+
+      <!-- ===== Tab 1: 引擎模型 ===== -->
+      <section class="tab active" id="tab-engines" data-page-node-id="Zs7buqRZVM524Jjt5DTidY">
+        <div class="tab-head" data-page-node-id="CwCHkIx1frcdfL3TcUhckb">
+          <div data-page-node-id="0RSOBZnUeHocRHTL0338MD">
+            <h2 data-page-node-id="1DHPx86YoIKHgAaBE4FUPj">翻译引擎与模型</h2>
+            <p class="tab-desc" data-page-node-id="zZ95HQVkTN9MR45ZqU7Bt1">选择你在意的翻译质量与成本：内置免费引擎开箱即用，也可以接入自己的 AI 模型获得更地道的译文。</p>
+          </div>
+          <button class="btn primary" id="btn-add-provider" data-page-node-id="FDGljA67Wi9NOUeQOpCESK">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" data-page-node-id="KXoKSvnB87LE1rjSojDR4t"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" data-page-node-id="n3S4aTlzwHIriIXBczy72Q"/></svg>
+            添加引擎
+          </button>
+        </div>
+
+        <div class="card-list" id="provider-list" data-page-node-id="oQKFaq60Wpfo0d6gE4UKAX"></div>
+
+        <div class="tip-card" data-page-node-id="HRD4BNAeH6SY1f8JLaJJCj">
+          <b data-page-node-id="orMBThqexUgrYMP6unlHBU">接入自己的模型：</b>任意 OpenAI 兼容接口均可使用（DeepSeek / Kimi / 智谱 GLM / 通义千问 / Groq / 硅基流动 / Ollama 本地模型等）。点击「添加引擎」后选择「AI 模型」，或直接使用快速预设。
+        </div>
+      </section>
+
+      <!-- ===== Tab 2: 语言 ===== -->
+      <section class="tab" id="tab-langs" data-page-node-id="EyHveePtqyOy8tp7cjXTB0">
+        <div class="tab-head" data-page-node-id="95IDgWBfEIwN1bku3dHvKO">
+          <div data-page-node-id="cfQUKXbSsrj4TnMpJxqh8D">
+            <h2 data-page-node-id="IFKigLNmHSQKafkktqts94">语言管理</h2>
+            <p class="tab-desc" data-page-node-id="GGstCVNH7fhqgGyI4oqmc1">设置默认翻译方向，并挑选常出现在快捷列表中的语言。</p>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="C2qZtYHRwwPC6G0Dg4kol3">
+          <div class="card-title" data-page-node-id="EZLEMCORHhhOzoFEE5a8Nv">默认翻译方向</div>
+          <div class="lang-default-row" data-page-node-id="gwnZYDPeRu3hTix1u6StDM">
+            <div class="field" data-page-node-id="UaTAVH6zQHbo29GmnKydWS">
+              <label data-page-node-id="wB8XKa6sw3dq716zcCU0VN">源语言</label>
+              <select id="opt-source" data-page-node-id="KiAxiLPoAP0uk2jrDXo80i"></select>
+            </div>
+            <button class="swap" id="opt-swap" title="交换" data-page-node-id="5YJejVVGu1RjDJR1cRbtwn">
+              <svg viewBox="0 0 20 20" width="15" height="15" fill="none" data-page-node-id="1MoGT2wef6uP4LuKuaiTjr"><path d="M4 7h11l-3-3M16 13H5l3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="auMHFUGPZt3T2h3BTIEGOb"/></svg>
+            </button>
+            <div class="field" data-page-node-id="NCb8ZAsCuoQHjjn0C3pB01">
+              <label data-page-node-id="ctwx1ebyb60lSDV2plBToQ">目标语言</label>
+              <select id="opt-target" data-page-node-id="NJ6l6hBYvE9OZ1GFybkbWL"></select>
+            </div>
+          </div>
+          <label class="check-row" data-page-node-id="p469dSobzz6DJL3SGJ3XIO">
+            <input type="checkbox" id="opt-auto" data-page-node-id="vz74K55I0zkPtZVqFVG7Es">
+            <span data-page-node-id="iWC0ZIOFxyKxnGzneHItZv">打开网页后<b data-page-node-id="ffc6zo04PfDOkuiyfOWAWf">自动开始翻译</b>（全局；也可仅对特定站点开启）</span>
+          </label>
+        </div>
+
+        <div class="card" data-page-node-id="gQ4olE2WyoQH7DxVyIApVv">
+          <div class="card-title" data-page-node-id="AIPHMVQq1cm85hp4447uR0">常用语言 <span class="card-sub" data-page-node-id="sn6ad0EjF4PfVy9UQLUxGv">点击卡片，加入弹窗与悬浮面板的快捷列表</span></div>
+          <div class="chip-grid" id="lang-chips" data-page-node-id="Aqvodtm8mcLki9iFrgvdgU"></div>
+        </div>
+
+        <div class="card" data-page-node-id="CRddbnOHLZuT6H9X3g2ozz">
+          <div class="card-title" data-page-node-id="CCyjdKVxDFlhFLbGMzE8Tg">自定义语言 <span class="card-sub" data-page-node-id="Yl4ToRZOfnHyMmFlcSWgAN">内置列表没有的语言可在此添加（代码需与引擎兼容，如 Google/Bing 风格）</span></div>
+          <div class="custom-lang-list" id="custom-lang-list" data-page-node-id="sL404sbXPAmh3yP8u4wjqE"></div>
+          <div class="inline-form" data-page-node-id="FLDSWqKquRBxmnFXD4A6ao">
+            <input type="text" id="cl-code" placeholder="语言代码，如 km" style="width:140px" data-page-node-id="xgjaWKxLB8BQdfeCntwyko">
+            <input type="text" id="cl-name" placeholder="显示名称，如 高棉语" data-page-node-id="cKhiYGXY6azKLr1rVqBwSO">
+            <button class="btn ghost" id="btn-add-lang" data-page-node-id="jdygaJ5poDkqvpqV4Qy2eh">添加</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Tab 3: 显示效果 ===== -->
+      <section class="tab" id="tab-display" data-page-node-id="KQVEeuU1mroDeVwnaanrqr">
+        <div class="tab-head" data-page-node-id="omELcptLSoErp531OGu75T">
+          <div data-page-node-id="k8CxRPk7eQjOjuNCR4Xdvj">
+            <h2 data-page-node-id="TDsQPFtlT06NNulNe3SYpx">显示效果</h2>
+            <p class="tab-desc" data-page-node-id="Hc4cRjIkHTPGrvj9WUXB5r">译文如何呈现在页面上，由你决定。</p>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="PQ5Z70tKQTTIZulhLadJ1H">
+          <div class="card-title" data-page-node-id="jvAxpo0sAQsB3mlTdDF3Qs">展示模式</div>
+          <div class="mode-cards" data-page-node-id="h4AgGyEsKYZ87t6VwbWQnh">
+            <button class="mode-card" data-mode="bilingual" data-page-node-id="dYCtgRpNDuSB3EmqDdapr0">
+              <div class="mode-visual bilingual" data-page-node-id="KY0IRQw7hHatXcKxdI2UCG"><span class="l1" data-page-node-id="qbVSUbx5LKPhKnQZeEGOZA">The quick brown fox</span><span class="l2" data-page-node-id="3nGZmf2AAGsKgwz5iXq2rg">敏捷的棕色狐狸</span></div>
+              <b data-page-node-id="SjmS48EJZtf9Y4AfVAXxpb">双语对照</b>
+              <span data-page-node-id="K2w8WP8zYDL3mBDhpziWCC">原文下方插入译文，适合精读与对照</span>
+            </button>
+            <button class="mode-card" data-mode="replace" data-page-node-id="nfFnXgqbtSynyRmvcYXW1y">
+              <div class="mode-visual replace" data-page-node-id="jxTxpW6G0Y5rmSo7WZRW2E"><span class="l2" data-page-node-id="qvpN5lVK61z5QGdf71Nddo">敏捷的棕色狐狸跳过了懒惰的狗。</span></div>
+              <b data-page-node-id="3iswLzKWeHNJkhGERJCsmQ">替换原文</b>
+              <span data-page-node-id="ltSqRFOrWG3701jgI71e5p">直接以译文替换原文，页面更干净</span>
+            </button>
+            <button class="mode-card" data-mode="hover" data-page-node-id="I5XDZxzFzQrEtqTwA34jkY">
+              <div class="mode-visual hover" data-page-node-id="bv3mGSBJE1R8gOdnU49ShX"><span class="l1" data-page-node-id="hUC5FNXGQQ5MxpGulIYgzB">The quick brown fox</span><span class="hv" data-page-node-id="YdrJjsJTzUzEWmOcizfv24">👆 悬停查看译文</span></div>
+              <b data-page-node-id="zBtnA3rLnkpiTnHAcpGzKy">悬停查看</b>
+              <span data-page-node-id="4LZ7Sm2263N708jfbJJUoJ">页面保持原貌，悬停段落时显示译文</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="bGcN491Zm4Tn2bGCT6XD9W">
+          <div class="card-title" data-page-node-id="6ICFFkbuYihNnAUz0sGefj">译文样式</div>
+          <div class="style-grid" data-page-node-id="VMkVFLSAAdO4Gi92jahh9p">
+            <div class="field" data-page-node-id="FuFoqBvkHsHDJqWTsjlhbB">
+              <label data-page-node-id="wBSGeBK5q5FCdG7RatBWeQ">译文颜色</label>
+              <div class="color-row" data-page-node-id="d9gzK9Sdwbx3SeVNCzNH3F">
+                <div class="swatches" id="swatches" data-page-node-id="9jMQLnFsjjA61MyKjnnBbE">
+                  <button class="swatch" data-c="" style="background:conic-gradient(from 0deg,#666,#999,#666)" title="跟随网站" data-page-node-id="lhqURuowzdd9YrYrxefMec"></button>
+                  <button class="swatch" data-c="#6a72ff" style="background:#6a72ff" data-page-node-id="zZk2AmTE7Yvm5QK7ufyd3A"></button>
+                  <button class="swatch" data-c="#34d399" style="background:#34d399" data-page-node-id="8pSORMMzZsMdmNP9tFvACM"></button>
+                  <button class="swatch" data-c="#f59e0b" style="background:#f59e0b" data-page-node-id="r8OPnRLWrFBXVhQDkEd5Gk"></button>
+                  <button class="swatch" data-c="#f472b6" style="background:#f472b6" data-page-node-id="kxIzm9aM7QlNV2NASFTsek"></button>
+                  <button class="swatch" data-c="#38bdf8" style="background:#38bdf8" data-page-node-id="3uLd4aGpaFY0l4iKQOcyLG"></button>
+                </div>
+                <input type="color" id="opt-color" value="#6a72ff" title="自定义颜色" data-page-node-id="kDJBEtUSMFpDen27EvL8ZG">
+              </div>
+            </div>
+            <div class="field" data-page-node-id="dlGwJFk8igV3yK6ObDftZu">
+              <label data-page-node-id="BEENwPjmPFEavADvhtSYEB">译文字号 <span id="font-size-val" class="val-tag" data-page-node-id="Wjpwj2CWt3fH4UnTlE9TAP">95%</span></label>
+              <input type="range" id="opt-fontsize" min="80" max="125" step="5" value="95" data-page-node-id="V85BCu3T9dKybcfnDoCE24">
+            </div>
+            <label class="check-row" data-page-node-id="zBRWgNRGpJokVUdCyHuItG">
+              <input type="checkbox" id="opt-badge" data-page-node-id="EMqSgLUUTCmbPiU3cBTr8h">
+              <span data-page-node-id="JDsuHuz27JO3wmLINEGVlJ">在译文前显示「译」小徽标</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="OonnRbBz9KdOHxzh5cEubc">
+          <div class="card-title" data-page-node-id="fSqXKglxRPiqIcwys1BEAE">实时预览</div>
+          <div class="preview-box" id="preview-box" data-page-node-id="e7VxUm2OCXBQ8JFy3AE30E">
+            <div class="pv-title" data-page-node-id="j9CDuLVKNr10o8ID52v1hd">How a Web Page Reads</div>
+            <div class="pv-orig" data-page-node-id="JiCPbA7DVecyqLqTRPNrda">The quick brown fox jumps over the lazy dog. This paragraph demonstrates how bilingual translation will look on any website you visit.</div>
+            <div class="pv-trans" id="pv-trans" data-page-node-id="agAZUfMwi02mI8tEwqDIT6">敏捷的棕色狐狸跳过了懒惰的狗。这一段演示了双语对照翻译在你访问的任何网站上的呈现效果。</div>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="BvCuGxK8lKPEDA6IondVY8">
+          <div class="card-title" data-page-node-id="RacTIwlEWd4SBkwlLg7jpT">划词翻译</div>
+          <label class="check-row" data-page-node-id="VL08ACPmMZsUcUo9fq3KI7">
+            <input type="checkbox" id="opt-selbar" data-page-node-id="KUIFj9ghBXlvp7cfS9Djiq">
+            <span data-page-node-id="aZtcb5ulhrLrpHthgCUOIh">选中页面文字时，弹出<b data-page-node-id="I2v6qkxD3E6EHMj4KVBLLH">翻译浮条</b>（翻译 / 复制一键完成，独立于整页翻译开关）</span>
+          </label>
+          <span class="hint" data-page-node-id="631pzxBwR75YEthwS9ACQN">关闭后，仍可通过右键菜单「BPFlow：翻译选中文字」划词翻译</span>
+        </div>
+      </section>
+
+      <!-- ===== Tab 5: 视频直播 ===== -->
+      <section class="tab" id="tab-video" data-page-node-id="yGOKSf8EudBysy2waEHEzj">
+        <div class="tab-head" data-page-node-id="fHcHwEjqmWZqyzNoQw9HfV">
+          <div data-page-node-id="ngZdlTS4VFzQG5Le8EjRVN">
+            <h2 data-page-node-id="ttc3mOHLXzTJLrFGxY3phN">视频与直播字幕</h2>
+            <p class="tab-desc" data-page-node-id="FzXsSDpAvIhFHUDIKVajpx">把视频 CC 字幕与直播语音，变成实时双语字幕。</p>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="aGuVEupuD4zptkh5dsmWGG">
+          <div class="card-title" data-page-node-id="OIgw4hSBIRFEE6lu30D4mS">视频字幕翻译 <span class="card-sub" data-page-node-id="oVUCQohy2lgFNwtE4jGZFh">YouTube / Bilibili / 任意带 CC 字幕的 HTML5 视频</span></div>
+          <label class="check-row" data-page-node-id="dCBFZhhg18MugWqJKQ9fQb">
+            <input type="checkbox" id="opt-video" data-page-node-id="bCGS9axth9UmWxjJNwHXO3">
+            <span data-page-node-id="TdVplZNvPPXwCOntR7hyvY">检测到视频字幕时<b data-page-node-id="HBFoXvXMo4iGwdx74HRLwm">自动实时翻译</b>，在播放器内叠加双语字幕</span>
+          </label>
+          <label class="check-row" style="margin-top:8px" data-page-node-id="dDE8UAsWUBQ1GjexmuKHso">
+            <input type="checkbox" id="opt-video-bi" data-page-node-id="iabGD4DIqnn6uVpCgRstSn">
+            <span data-page-node-id="1g5u638L6cYbB1DkGM8vR1"><b data-page-node-id="lPGuQfRxndJAgXKQD8wnqa">双语显示</b>（原文 + 译文）；关闭则只显示译文</span>
+          </label>
+          <span class="hint" data-page-node-id="vka5gJvfXXoMu20vy9sjGj">需要视频自带 CC 字幕（YouTube 自动生成字幕即可）：在播放器中开启字幕后，双语字幕层会自动接管显示。画中画（PiP）窗口内不显示。</span>
+        </div>
+
+        <div class="card" data-page-node-id="UXBUUlHgeYGI7DRPChVXlK">
+          <div class="card-title" data-page-node-id="9wRMcaNG9QXdrBWJpCqNCy">直播语音翻译 <span class="card-sub" data-page-node-id="sxaJCJCn0sIaYN4zBR1Kif">Twitch / 直播间等没有字幕的场景</span></div>
+          <p class="hint" style="margin:0 0 12px" data-page-node-id="7bW1DNAk9wxxK5RZSVsepB">三种启动方式任选：<b data-page-node-id="4nxVmHPePQDz7iOwiiGLzi">弹窗</b>（点工具栏图标 → 直播字幕 → 开始）、<b data-page-node-id="9eMVFUh5i2e1JobL65Yh2j">右键菜单</b>「BPFlow：直播字幕翻译」、<b data-page-node-id="pg6NUZBQLiDlNtPtmD5AHg">快捷键</b> <span class="kbd" data-page-node-id="6FyBLggvTCSpIPoRXvj9Vm">Alt+Shift+L</span>。页面悬浮球面板的按钮在浏览器尚未「唤起」扩展时会提示改用以上方式。</p>
+          <p class="hint" style="margin:0 0 12px" data-page-node-id="F59TPpsICr6temcC8BeEGH">流程：捕获本页声音 → 实时语音转写 → 翻译成滚动字幕；声音保持正常播放，文本翻译使用你当前选择的翻译引擎。</p>
+          <div class="field" data-page-node-id="aB39aIJzrwbBpDRtC5LTdd">
+            <label data-page-node-id="K03n1G1VITDnCuYBLxh4PL">转写引擎</label>
+            <div class="seg" id="v-seg-engine" data-page-node-id="EbziZehVCBzXC7CcRanIQU">
+              <button type="button" data-v="bailian" data-page-node-id="puXMxJKylkxU9EPEnADhCR">阿里云百炼</button>
+              <button type="button" data-v="openai" data-page-node-id="0AvbAvNQD5xSheHymTIRdq">OpenAI 兼容</button>
+            </div>
+            <span class="hint" data-page-node-id="1gTULYvWEqn6RGlaTIQY7L">两套配置相互独立：切换引擎不会覆盖另一套的地址 / 模型 / 密钥。阿里云百炼按所选模型自动推导协议与接口地址（HTTP 分片上传）；OpenAI 兼容走 <code data-page-node-id="MIKksZGlRZZRS48iiGsQPj">/audio/transcriptions</code>，5 秒分片上传</span>
+          </div>
+
+          <!-- 阿里云百炼 配置 -->
+          <div id="v-bailian-block" data-page-node-id="qDryTmq0DRQmPLBDewL6PA">
+            <div class="field" data-page-node-id="MroR4euT059FPZzBCjHzo1">
+              <label data-page-node-id="unx8BIh2E0cNmGtJB7sZgS">模型 <span class="req" data-page-node-id="AcalNtrvcxkT3vPPcWCxnI">*</span></label>
+              <select id="v-bl-model" data-page-node-id="VpAhiChdj78pv1IqVst5oh"></select>
+              <span class="hint" id="v-bl-note" data-page-node-id="ueMwV7epJOPP6hXrASEMup"></span>
+            </div>
+            <div class="field" data-page-node-id="W22UcdYF0AvTdq72NCNrRU">
+              <label data-page-node-id="kou5vGmozEtC19d9wXPIOm">接口地址 <span class="hint" data-page-node-id="twvn8ZpELhClOfNPjoXnrv">（按模型自动推导）</span></label>
+              <input type="text" id="v-bl-baseurl" spellcheck="false" disabled data-page-node-id="HW2h7qOVOp2jJ3W1KRBFBW">
+              <span class="hint" id="v-bl-baseurl-hint" data-page-node-id="JXKCoTDJOG1pZjDMsePGLO"></span>
+            </div>
+            <div class="field" data-page-node-id="2cglslilQJ8XCRJYT5HmEa">
+              <label data-page-node-id="sCYYMFIDpQPKMs2X0VKSbS">自定义接口地址 <span class="hint" data-page-node-id="xMlBsHQUiXzhU9nhmB7qPk">（可选，用于专属端点）</span></label>
+              <input type="text" id="v-bl-baseurl-custom" placeholder="留空 = 使用上方自动推导的官方地址" spellcheck="false" data-page-node-id="1IllZ2fzyaNjLhGwPDv4dB">
+              <span class="hint" id="v-bl-custom-hint" data-page-node-id="NMEQTUX3ZGvZSYXmf1bDEk">使用百炼专属端点（形如 <code data-page-node-id="wqymdA2sUFwRQVHLaCITAq">https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1</code>）时填写，需把 <code data-page-node-id="z1H75CepQS2oa0Z2qJAw7G">{WorkspaceId}</code> 替换为真实业务空间 ID。注意：业务空间端点通常只服务空间内部署的模型，若转写持续报 HTTP 400，请清空此项改用官方地址</span>
+            </div>
+            <div class="field" data-page-node-id="izBYUOuOQGos1PohWMe3IF">
+              <label data-page-node-id="LGvv2brswaC7EGeQMZmMRu">API Key</label>
+              <div class="key-wrap" data-page-node-id="De86DE1vfIebbSvMauG2Yn">
+                <input type="password" id="v-bl-apikey" placeholder="sk-…" spellcheck="false" data-page-node-id="32gU4ZICa3QxalJaY49oBt">
+                <button type="button" class="eye" id="v-bl-eye" data-page-node-id="QGOBI5peRrwCvwiFAvwPc0">显示</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- OpenAI 兼容 配置 -->
+          <div id="v-openai-block" data-page-node-id="BD5Cx3ukJ8o4j9wCOrzLDX">
+            <div class="field" data-page-node-id="nkzd2GCIs0y2cpdtNZtJUM">
+              <label data-page-node-id="jwEwPb8SZHOPGn7dly0uZC">快速预设</label>
+              <div class="preset-chips" id="v-presets" data-page-node-id="tnVbubr8z7lEqAqi51w7BL"></div>
+            </div>
+            <div class="field" data-page-node-id="fAqFYtXYEAR4EFmshfteT1">
+              <label data-page-node-id="QamlHLKpTWdqRUuHFXdyh8">接口地址 Base URL <span class="req" data-page-node-id="qVSuuFMRJJmquiT12AwoEX">*</span></label>
+              <input type="text" id="v-oa-baseurl" placeholder="https://api.openai.com/v1" spellcheck="false" data-page-node-id="cWyV71rEhCJqGq4C2WUmwm">
+            </div>
+            <div class="field" data-page-node-id="j1gcwvtu7SBTQAH6xwiXvI">
+              <label data-page-node-id="OvWXybKGzDHYjyek0wsjj0">转写模型 <span class="req" data-page-node-id="oykPfQFzyYedRJkp9zwSYV">*</span></label>
+              <input type="text" id="v-oa-model" placeholder="whisper-1" spellcheck="false" data-page-node-id="sdoxP9yur0xJCP1COQwbVP">
+            </div>
+            <div class="field" data-page-node-id="VEgGeCzGmvkpUxCEpvdRcj">
+              <label data-page-node-id="g5QbuLuBqRSxJc5EpIZv6w">API Key</label>
+              <div class="key-wrap" data-page-node-id="CcDDHVFZ5s4fmh2wPbT1Oi">
+                <input type="password" id="v-oa-apikey" placeholder="sk-…" spellcheck="false" data-page-node-id="ZSGmjob7qbzGIZnuyp0XLg">
+                <button type="button" class="eye" id="v-oa-eye" data-page-node-id="eQGZA7EnCgZXq6jIhsJqYo">显示</button>
+              </div>
+            </div>
+          </div>
+          <div class="field" data-page-node-id="RsBzucL7VWtzW46VCCnutI">
+            <label class="check-row" style="margin:0 0 6px" data-page-node-id="Djk6e9MCtO39ptPUCxSA2g">
+              <input type="checkbox" id="v-syncvideo" data-page-node-id="FhXCKKZhP0Rh0wiPdGxaPK">
+              <span data-page-node-id="q6dLti1rEBGYvccd1W2rOY"><b data-page-node-id="X1TRH8F2g5DNnvVvK3tgiN">同步画面</b>：视频、声音、字幕三者一起延迟（画面经覆盖层延迟重放，整体比直播源晚「同步延迟」时长）</span>
+            </label>
+            <label data-page-node-id="s0vqBSggiBYc9BivawQDvc">同步延迟 <span id="v-delay-val" class="val-tag" data-page-node-id="E51IeMnkTfDAvPZbqmFxGg">关闭</span></label>
+            <input type="range" id="v-delay" min="0" max="30" step="0.5" value="0" data-page-node-id="CoUiqVuJ9EH96WJRD1UbpS">
+            <span class="hint" data-page-node-id="yWLwVOL9IFW97FGZ5ofUHa">字幕链路有时延（识别+翻译），把回放延迟到 ≥ 链路耗时后，字幕会与画面同时出现。建议配 <b data-page-node-id="mlcMKaSBWBE0y4rE5FK9gT">8~10 秒</b>，从小到大微调到「字随画走」。设为 0 关闭。开启「同步画面」时原画面被覆盖层替代（含声音）；不开启则只延迟声音、画面实时。修改后需重新开启直播字幕生效</span>
+          </div>
+          <div class="field" data-page-node-id="VD3wm8Sbtzgv9SXkqqUZN2">
+            <label data-page-node-id="ERhtP17BdPfTJ2tfdnczY6">画面延迟微调 <span id="v-vtrim-val" class="val-tag" data-page-node-id="NW8OwLVNTn7TpPglb6GHhM">±0</span></label>
+            <input type="range" id="v-vtrim" min="-3" max="3" step="0.25" value="0" data-page-node-id="CCBqUy8Z1PjougRRqDaWAN">
+            <span class="hint" data-page-node-id="X5jgN56aXW5sDu77lZ9RME">单独补偿画面相对声音的偏差：画面链路（1 秒分片 + 缓冲）固有延迟比声音多约 <b data-page-node-id="f0HZTGsuc6hkSEAsxDwSFN">1~2 秒</b>。<b data-page-node-id="BESva9cKHCtK9NhAzMPulE">画面慢于声音（口型对不上）→ 负值</b>让画面提前；画面快于声音 → 正值。步进 0.25 秒，对照口型微调。修改后需重新开启直播字幕生效</span>
+          </div>
+          <div class="field" id="v-field-apikey-hint" data-page-node-id="7cPE3L9xqCmDNdgxHy340m">
+            <span class="hint" data-page-node-id="ZdTwAdtt0YMrRjIGBea1ED">音频编码为 <b data-page-node-id="x8HqJsQPosVhYkynoYpdUQ">WAV 16kHz 单声道</b>、约 5 秒一片上传。配置仅保存在你自己的浏览器中</span>
+          </div>
+          <div class="field" data-page-node-id="TqLgC5Fj3k75NE25K3I85h">
+            <label data-page-node-id="tgEu8lAXgUnK5AxssrNdpG">源语言提示 <span class="hint" data-page-node-id="ALLkA52jHKf6nh2RskrpVJ">（提升识别准确率，不确定就选自动）</span></label>
+            <select id="v-lang" data-page-node-id="N3jHXTQdy9HbVPX29nzwYh"></select>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Tab 4: 高级设置 ===== -->
+      <section class="tab" id="tab-advanced" data-page-node-id="BteItEGyB9yVvW6tgJjpGO">
+        <div class="tab-head" data-page-node-id="0wdfMNVYWJcDKNjZlcA0aT">
+          <div data-page-node-id="k2HeIkouaBcS6ZcaY11vDV">
+            <h2 data-page-node-id="nZsWSKZ0ACcJ1gmkOXUHwu">高级设置</h2>
+            <p class="tab-desc" data-page-node-id="pImKZACWLsTumWopt1um3l">性能、缓存、站点规则与数据管理。</p>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="SqAmTmMhgfj3QskS24jy2S">
+          <div class="card-title" data-page-node-id="AlV0y9a7t56hyLoqwILlz5">性能</div>
+          <div class="style-grid" data-page-node-id="nLE40a2oTLtAQ5dZN7apIt">
+            <div class="field" data-page-node-id="9K3B5L9AmnQK8tyuZLthOF">
+              <label data-page-node-id="iw8MitkFzHDDrQUUA1DvZZ">并发请求数 <span id="concurrency-val" class="val-tag" data-page-node-id="41KD1NTllMU5v7Qn7hFBKE">4</span></label>
+              <input type="range" id="opt-concurrency" min="1" max="8" step="1" value="4" data-page-node-id="QNxZazDs6aaazIIUfmZzH2">
+              <span class="hint" data-page-node-id="yuPlPvd0SDGmICIiPhvSv1">过高可能触发引擎限流</span>
+            </div>
+            <div class="field" data-page-node-id="pUnCYgcF1LvOj51iKC1fpN">
+              <label data-page-node-id="8K32qNPMmtde5o6tr91ahX">最小翻译文本长度（字符）</label>
+              <input type="number" id="opt-minlen" min="1" max="50" step="1" value="2" style="width:110px" data-page-node-id="vZF7sce3BObvC9fLB0PoS0">
+            </div>
+            <div class="field" data-page-node-id="He2NCFSv3IIW2oAmwl0GUR">
+              <label data-page-node-id="m5QN3PElzcjKLwlI3la9ql">单页最大翻译块数</label>
+              <input type="number" id="opt-maxunits" min="50" max="3000" step="50" value="600" style="width:110px" data-page-node-id="VpxFSMFXjM1EhyfgmT628S">
+              <span class="hint" data-page-node-id="038iCIiMHsu8VUCp1s734a">防止超长页面请求过多</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-page-node-id="XHGOC0cEnc7OCF4uTVVAAo">
+          <div class="card-title" data-page-node-id="HaM26FP1AVxQayh1OcMOrC">译文缓存</div>
+          <div class="row-between" data-page-node-id="IAIe6d7ckR7YbTlLWaPk0E">
+            <label class="check-row" style="flex:1" data-page-node-id="SaQ7w1XS3rGaBmKe1vmXEy">
+              <input type="checkbox" id="opt-cache" data-page-node-id="8HSIKDNZbgscs8um3BZbkX">
+              <span data-page-node-id="j6ExLeQxySJcBR3z0O1AAs">启用缓存（相同文本不重复请求，节省额度）</span>
+            </label>
+            <button class="btn ghost" id="btn-clear-cache" data-page-node-id="vJxJ5aaGhNmiNrqAMtq1LF">清除缓存</button>
+          </div>
+          <div class="hint" id="cache-stats" data-page-node-id="mFRPfKUPL5Gi5Qs7zY5xer">已缓存 — 条译文</div>
+        </div>
+
+        <div class="card" data-page-node-id="Ub56nmGvtu38803MG2h0T8">
+          <div class="card-title" data-page-node-id="wBdN2BBmHIo238qRhkP3Kg">站点规则</div>
+          <div class="row-between" style="margin-bottom:10px" data-page-node-id="EaIICZAk3sC3dVL7OddEWt">
+            <span class="hint" style="margin:0" data-page-node-id="5ZU2QAmSWnrgJH8fq967eO">以下站点打开时<b data-page-node-id="5S1acxj6X1Hg5IB3m1cTmz">自动翻译</b>：</span>
+            <div class="inline-form" style="gap:6px" data-page-node-id="1Xd689giPHWHfY6PT2Cies">
+              <input type="text" id="site-auto-input" placeholder="example.com" style="width:180px" data-page-node-id="jZeHrxJT5qAJlIlUoYe0wF">
+              <button class="btn ghost" id="btn-add-auto-site" data-page-node-id="phGiyVlK2KnIdTpqIw0RE5">添加</button>
+            </div>
+          </div>
+          <div class="tag-list" id="auto-site-list" data-page-node-id="DoaQKgon5XxfjIBQeKabhR"></div>
+          <div class="row-between" style="margin:12px 0 10px" data-page-node-id="pjPLHP3tlzUjwHFhk3KcI3">
+            <span class="hint" style="margin:0" data-page-node-id="4vZ9XE95JqvrFpoeLsZhou">以下站点<b data-page-node-id="01AV3qA5x9JHiu1dAyMxzD">完全禁用</b>（不注入悬浮球）：</span>
+            <div class="inline-form" style="gap:6px" data-page-node-id="iGOqpHNMeBa8VhuFAM9kyp">
+              <input type="text" id="site-black-input" placeholder="example.com" style="width:180px" data-page-node-id="edRiy6fjnynxotnBYmpdQf">
+              <button class="btn ghost" id="btn-add-black-site" data-page-node-id="7SLIW2V29t9YzfNKRjFLPn">添加</button>
+            </div>
+          </div>
+          <div class="tag-list" id="black-site-list" data-page-node-id="NHZdv0ihKcyaCTDrHBNnm3"></div>
+        </div>
+
+        <div class="card" data-page-node-id="NQJqiGrIqdjpA6ArGLXt4t">
+          <div class="card-title" data-page-node-id="f4hmRSzqeyd4PDmFqWQdJE">数据管理</div>
+          <div class="row-between" data-page-node-id="Zr1KlUkyiz6oH8jfADYasG">
+            <span class="hint" style="margin:0" data-page-node-id="GtOysN5a3GuAKCmaoTIbst">导出 / 导入全部设置（含引擎配置，API Key 请自行注意保密）</span>
+            <div class="row" style="gap:8px" data-page-node-id="1A26IhMOH0mCMfnEVKF2ow">
+              <button class="btn ghost" id="btn-export" data-page-node-id="VbylDsPL7pEjT2xB0TniPy">导出设置</button>
+              <button class="btn ghost" id="btn-import" data-page-node-id="tMwOISlsQPrzpE2uERPo44">导入设置</button>
+              <button class="btn ghost danger" id="btn-reset" data-page-node-id="6t2cZ3XmjQ2Le9H6ketxp4">恢复默认</button>
+              <input type="file" id="file-import" accept="application/json" class="hidden" data-page-node-id="QV7ITqOC4G27EIzHbVAkEm">
+            </div>
+          </div>
+        </div>
+
+        <div class="card about" data-page-node-id="gouRc3zmMNiaYRDS8urmEv">
+          <div class="card-title" data-page-node-id="h5SyAWEFYUlnp11L0ALUuI">关于</div>
+          <p class="hint" style="margin:0" data-page-node-id="jBWEVC5ANlDe3zfxEAj6bq">
+            BPFlow 实时翻译 v<span id="about-ver" data-page-node-id="zQ8NjcEoIBUICoEKvLLVUl">1.0.0</span> · Manifest V3 ·
+            快捷键 <span class="kbd" data-page-node-id="y0QejmyB0KLje6YSPMvH56">Alt+Shift+Y</span> 翻译/还原当前页 ·
+            <span class="kbd" data-page-node-id="jK9ArZdD65CD8zQUHZnN7w">Alt+Shift+L</span> 直播字幕 ·
+            选中文字后自动弹出翻译浮条，或右键「BPFlow：翻译选中文字」亦可划词翻译。
+          </p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============ 引擎编辑对话框 ============ -->
+  <dialog id="dlg-provider" data-page-node-id="pL3yi22uQz1GQMw9m3gUTq">
+    <div class="dlg-head" data-page-node-id="bk1z4S7kotIhZ7LWKsCcvP">
+      <h3 id="dlg-title" data-page-node-id="KAdE9rwxefxRYGoK9udHOv">添加引擎</h3>
+      <button class="icon-btn" id="dlg-close" title="关闭" data-page-node-id="QhSMiU9CUCQV6BeTZis074">✕</button>
+    </div>
+
+    <div class="dlg-body" data-page-node-id="Aw6jsAjDVpsSlAp7wyHlxV">
+      <div class="field" data-page-node-id="NrGitXtGKOkbcM7iiUcbsL">
+        <label data-page-node-id="mcDQ6SvEBzTcAiJnYBRkbX">引擎类型</label>
+        <div class="type-grid" id="dlg-types" data-page-node-id="Rvw1tScF1FmJS3KVzdWehE">
+          <button type="button" class="type-card" data-type="openai" data-page-node-id="U33s0XJs1DNLHgx7PEqKa3"><b data-page-node-id="PGCcyDB08ZwrtSvcz3a2Z7">AI 模型</b><span data-page-node-id="VOJxQ4MyiHjuwRQZ9sSKVN">OpenAI 兼容接口</span></button>
+          <button type="button" class="type-card" data-type="deepl" data-page-node-id="F1R6gfD2tplx9SJO4LGOou"><b data-page-node-id="ouqpCeMXWn3VMqjuiE2c1F">DeepL</b><span data-page-node-id="izErL3iVQoqzWLe2UTCeqM">高质量 · 需 Key</span></button>
+          <button type="button" class="type-card" data-type="bing-free" data-page-node-id="iJYESVQBvTg8fiu8krIGWX"><b data-page-node-id="7QzkcfyCL6ZQv6ejnUuBfO">Bing 翻译</b><span data-page-node-id="RrcDR448wU9FNPVi3bel6M">免费 · 内置</span></button>
+          <button type="button" class="type-card" data-type="google-free" data-page-node-id="hY85onFjW1vw81z5jAu1nQ"><b data-page-node-id="vr2QK0GIZM2BAzwx9xre4T">Google 翻译</b><span data-page-node-id="YbDNWtGce86kc42kFDr8C2">免费 · 内置</span></button>
+          <button type="button" class="type-card" data-type="mymemory" data-page-node-id="UI5FPiC8thqb5On4xZUwyP"><b data-page-node-id="h91QXALG9IcsQn2HAg3wEg">MyMemory</b><span data-page-node-id="GoFEJkU02ZoNRG9lGCwEgP">免费</span></button>
+        </div>
+      </div>
+
+      <div id="dlg-openai-only" class="hidden" data-page-node-id="3dWxhYQmeY40JUCgcBXTnv">
+        <div class="field" data-page-node-id="AfTcfaISqcVSHlsY0LD1yb">
+          <label data-page-node-id="NfOlSwBJ1gLK5iSoq9FxO2">快速预设</label>
+          <div class="preset-chips" id="dlg-presets" data-page-node-id="LcnAb7UnZowAwBjZmbkybE"></div>
+        </div>
+        <div class="field" data-page-node-id="nSNl0aroWyYQzkbQGb6LMY">
+          <label data-page-node-id="LY4X2GTwNaSHHBWD9SH9WV">接口地址 Base URL <span class="req" data-page-node-id="ydYY5TW99bvpFDnxPEdFDN">*</span></label>
+          <input type="text" id="f-baseurl" placeholder="https://api.deepseek.com/v1" spellcheck="false" data-page-node-id="GqHaYkKbGhBKXJ2jEwAiqE">
+        </div>
+        <div class="field" data-page-node-id="hFn40CPXbRcVvVBf9LvM5E">
+          <label data-page-node-id="BgiWL4EaUGDR55Hopxf3OB">模型名称 <span class="req" data-page-node-id="3StGjjHOn7ILOf2VuMs9kX">*</span></label>
+          <input type="text" id="f-model" placeholder="deepseek-chat" spellcheck="false" data-page-node-id="PIE1OsEuhkUlfM8YL7acyu">
+        </div>
+        <div class="field" data-page-node-id="H83u0vBfuiRDHkAjE11rWH">
+          <label data-page-node-id="eOQlpAitXz9JfvrqNiffqF">API Key</label>
+          <div class="key-wrap" data-page-node-id="hrn2HwIIcoMcnpFxCf3M55">
+            <input type="password" id="f-apikey" placeholder="sk-…" spellcheck="false" data-page-node-id="oBrwE3KBNKEWQ6DTNbwJut">
+            <button type="button" class="eye" id="btn-eye" data-page-node-id="tVVtm0b6nfUD8ooIAbwSXD">显示</button>
+          </div>
+          <span class="hint" data-page-node-id="LxWzCO6BZLNuuSwXPOixYI">仅保存在你自己的浏览器中，不会上传到任何服务器</span>
+        </div>
+        <details class="adv-details" data-page-node-id="acN3pUepDlHyvhH1PkYGUa">
+          <summary data-page-node-id="Ds1HxanVu8d88qbiqDPyrl">高级选项</summary>
+          <div class="field" data-page-node-id="rYoO0d2vwgivYK5eU9WEUW">
+            <label data-page-node-id="iDthrg3ZkpSA93XJCu4qrT">温度 temperature</label>
+            <input type="number" id="f-temp" step="0.1" min="0" max="1" value="0.1" style="width:110px" data-page-node-id="0XNsojlDT8wzgecc9aHwW2">
+            <span class="hint" data-page-node-id="Uj7SKLtWsaR1euqFcKKsOz">翻译建议保持 0 ~ 0.3</span>
+          </div>
+          <div class="field" data-page-node-id="U6t7Hjj5H4yBzoFa2R0ezN">
+            <label data-page-node-id="rhS0O355yf5xqw5Cc4Ufjn">自定义提示词（可选）</label>
+            <textarea id="f-prompt" rows="3" placeholder="可用变量：{source} 源语言 · {target} 目标语言 · {texts} JSON 文本数组。留空使用内置提示词。" spellcheck="false"></textarea>
+          </div>
+        </details>
+      </div>
+
+      <div id="dlg-deepl-only" class="hidden" data-page-node-id="wuVQIm5EHaqD3ELil6kt8G">
+        <div class="field" data-page-node-id="z6k6F7jqFTxhu4UZODVbxc">
+          <label data-page-node-id="kNk7p0IyxsCdT6CAGT22ss">API Key <span class="req" data-page-node-id="bzlKKLfWKZPLwwHK7ymhsB">*</span></label>
+          <div class="key-wrap" data-page-node-id="hKTPYqDOL32QYkFIFz674Q">
+            <input type="password" id="f-deepl-key" placeholder="xxxxxxxx-xxxx-…:fx" spellcheck="false" data-page-node-id="5vbYJQN3My132nZFBr1R5D">
+            <button type="button" class="eye" id="btn-eye-2" data-page-node-id="x9gJjZgeOdZZgxkr9dKgF8">显示</button>
+          </div>
+          <span class="hint" data-page-node-id="h446VyBQfZghGQi99RT6HD">在 deepl.com 控制台免费申请；免费版 Key 以 <code data-page-node-id="YRSOW6Yw3nFm6p62QjY22m">:fx</code> 结尾</span>
+        </div>
+        <div class="field" data-page-node-id="9MbmjMDo1aSjM95WWatBoS">
+          <label data-page-node-id="nl8QFwQ9zmMHcQl7OjILNG">账户类型</label>
+          <div class="seg" id="seg-plan" data-page-node-id="MDrv2iuVlBMBMs7XW3U3MK">
+            <button type="button" data-plan="free" class="active" data-page-node-id="J5R2lPGtM6ly6lNzBOSwCO">免费版 DeepL API Free</button>
+            <button type="button" data-plan="pro" data-page-node-id="P5SFrFm4BZH4XwFoVZ0868">Pro 版</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field" id="dlg-name-row" data-page-node-id="zF4xg90SSg2pOnfdxS6Osf">
+        <label data-page-node-id="89a6SJMG56VtbSqPcJGlI5">显示名称</label>
+        <input type="text" id="f-name" placeholder="我的翻译引擎" spellcheck="false" data-page-node-id="ZIJWxKBSiPYbQA9cUzecl6">
+      </div>
+    </div>
+
+    <div class="dlg-foot" data-page-node-id="X6ArAye4K4b6IqBAtCGr9J">
+      <button class="btn ghost" id="dlg-cancel" data-page-node-id="P3p7iOrgXq6cF6WDiGSZyw">取消</button>
+      <button class="btn primary" id="dlg-save" data-page-node-id="OcECNj2xkIeVdMkds6cVUw">保存</button>
+    </div>
+  </dialog>
+
+  <div class="toast hidden" id="toast" data-page-node-id="Ows1HgSyAEA5VnKxFfnzka"></div>
+
+  <script src="../shared/preview-shim.js"></script>
+  <script src="../shared/langs.js"></script>
+  <script src="../shared/defaults.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

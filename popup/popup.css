@@ -1,0 +1,198 @@
+/* BPFlow Popup — 深色高端风格 */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0b0d13;
+  --bg-2: #12151f;
+  --bg-3: #171b28;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-2: rgba(255, 255, 255, 0.13);
+  --text: #e8eaf2;
+  --text-2: #a8b0c4;
+  --text-3: #6b7387;
+  --accent: #6c7cff;
+  --grad: linear-gradient(135deg, #5b8cff, #a05cff);
+  --ok: #34d399;
+  --warn: #fbbf24;
+}
+
+html, body { width: 372px; margin: 0 auto; }
+
+body {
+  background:
+    radial-gradient(560px 220px at 85% -10%, rgba(124, 92, 255, 0.14), transparent 60%),
+    radial-gradient(420px 200px at -10% 110%, rgba(91, 140, 255, 0.10), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 16px 16px 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.hidden { display: none !important; }
+
+.preview-badge {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(251, 191, 36, 0.12); color: #fbbf24;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.2);
+  font-size: 11px; text-align: center; padding: 5px 8px;
+  margin: -16px -16px 12px;
+}
+
+/* ---------- 头部 ---------- */
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo {
+  width: 38px; height: 38px; border-radius: 12px;
+  background: var(--grad); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; font-weight: 700;
+  box-shadow: 0 6px 18px rgba(96, 112, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.title h1 { font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
+.title .sub { font-size: 11px; color: var(--text-3); letter-spacing: 0.04em; }
+.gear {
+  width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04); color: var(--text-2); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.gear:hover { background: rgba(255, 255, 255, 0.1); color: #fff; border-color: var(--border-2); }
+
+/* ---------- 主开关 ---------- */
+.toggle-card {
+  display: flex; align-items: center; justify-content: space-between;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
+  border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px 14px; margin-bottom: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.toggle-card.on {
+  border-color: rgba(108, 124, 255, 0.45);
+  box-shadow: 0 0 0 1px rgba(108, 124, 255, 0.18), 0 8px 26px rgba(96, 112, 255, 0.16);
+  background: linear-gradient(180deg, rgba(108, 124, 255, 0.10), rgba(160, 92, 255, 0.05));
+}
+.toggle-title { font-size: 14px; font-weight: 600; display: block; }
+.toggle-sub { font-size: 11px; color: var(--text-3); }
+
+.switch {
+  position: relative; width: 46px; height: 26px; border-radius: 99px;
+  border: none; cursor: pointer; flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.1); transition: background 0.2s;
+}
+.switch .knob {
+  position: absolute; left: 3px; top: 3px; width: 20px; height: 20px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 0.22s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.switch[aria-checked="true"] { background: var(--grad); }
+.switch[aria-checked="true"] .knob { transform: translateX(20px); }
+.switch:disabled { opacity: 0.5; cursor: default; }
+
+/* ---------- 语言 ---------- */
+.lang-row { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 12px; }
+.lang-select { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.lang-select label { font-size: 11px; color: var(--text-3); letter-spacing: 0.05em; padding-left: 2px; }
+.swap {
+  width: 32px; height: 34px; border-radius: 9px; border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04); color: var(--text-2); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; margin-bottom: 1px;
+  transition: all 0.15s;
+}
+.swap:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
+.swap:active { transform: rotate(180deg); }
+
+select {
+  appearance: none; -webkit-appearance: none;
+  width: 100%;
+  background: var(--bg-2) url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a8b0c4' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center;
+  border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); font-size: 13px;
+  padding: 8px 28px 8px 11px; cursor: pointer; outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+}
+select:hover, select:focus { border-color: var(--border-2); }
+select option { background: #161a26; color: var(--text); }
+
+/* ---------- 字段 ---------- */
+.field { margin-bottom: 12px; }
+.field-label { font-size: 11px; color: var(--text-3); letter-spacing: 0.05em; margin-bottom: 6px; padding-left: 2px; }
+
+.seg { display: flex; gap: 4px; background: rgba(255, 255, 255, 0.045); border-radius: 11px; padding: 4px; }
+.seg button {
+  flex: 1; border: none; background: transparent; color: var(--text-2);
+  padding: 7px 0; border-radius: 8px; cursor: pointer; font-size: 12px;
+  font-family: inherit; transition: all 0.15s;
+}
+.seg button:hover { color: var(--text); }
+.seg button.active {
+  background: var(--grad); color: #fff; font-weight: 500;
+  box-shadow: 0 3px 10px rgba(96, 112, 255, 0.35);
+}
+
+/* ---------- 直播字幕 ---------- */
+.live-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 12px; margin-bottom: 12px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.live-card.on {
+  border-color: rgba(244, 63, 94, 0.4);
+  background: linear-gradient(180deg, rgba(244, 63, 94, 0.10), rgba(244, 63, 94, 0.03));
+}
+.live-info { min-width: 0; }
+.live-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.live-sub { font-size: 11px; color: var(--text-3); }
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-3); flex-shrink: 0;
+}
+.live-card.on .live-dot { background: #f43f5e; animation: live-blink 1.2s ease infinite; }
+@keyframes live-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.live-btn {
+  border: 1px solid var(--border-2); border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05); color: var(--text);
+  font-size: 12px; font-family: inherit;
+  padding: 7px 14px; cursor: pointer; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.live-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.live-card.on .live-btn { border-color: rgba(244, 63, 94, 0.5); color: #fecdd3; }
+
+.engine-row { display: flex; gap: 8px; align-items: center; }
+.engine-row select { flex: 1; }
+.manage {
+  color: var(--accent); text-decoration: none; font-size: 12px; white-space: nowrap;
+  padding: 6px 8px; border-radius: 8px; transition: background 0.15s;
+}
+.manage:hover { background: rgba(108, 124, 255, 0.12); }
+.engine-hint { font-size: 11px; color: var(--text-3); margin-top: 6px; padding-left: 2px; }
+.engine-hint b { color: #8f9bff; font-weight: 500; }
+
+.page-hint {
+  font-size: 12px; color: #fbbf24; background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.18); border-radius: 10px;
+  padding: 8px 11px; margin-bottom: 12px;
+}
+
+/* ---------- 底部 ---------- */
+footer {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 2px 13px; margin: 2px -16px 0;
+  border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text-3);
+}
+.kbd {
+  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border);
+  border-radius: 5px; padding: 2px 7px; font-size: 10px; color: var(--text-2);
+  font-family: ui-monospace, Consolas, monospace;
+}
+.dot-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--text-3); }
+.grow { flex: 1; }
+.by { letter-spacing: 0.03em; }

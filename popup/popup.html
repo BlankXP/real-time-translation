@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BPFlow 实时翻译</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="preview-badge hidden" id="preview-badge">浏览器预览模式 · 非扩展环境</div>
+
+  <header>
+    <div class="brand">
+      <span class="logo">译</span>
+      <div class="title">
+        <h1>BPFlow</h1>
+        <span class="sub">实时翻译 · 所见即所得</span>
+      </div>
+    </div>
+    <button class="gear" id="btn-options" title="打开设置">
+      <svg viewBox="0 0 20 20" width="16" height="16" fill="none">
+        <circle cx="10" cy="10" r="2.4" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </header>
+
+  <main>
+    <!-- 主开关 -->
+    <div class="toggle-card" id="toggle-card">
+      <div class="toggle-info">
+        <span class="toggle-title">翻译此页面</span>
+        <span class="toggle-sub" id="toggle-sub">点击开启，再次点击还原</span>
+      </div>
+      <button class="switch" id="btn-toggle" role="switch" aria-checked="false">
+        <span class="knob"></span>
+      </button>
+    </div>
+
+    <!-- 语言选择 -->
+    <div class="lang-row">
+      <div class="lang-select">
+        <label>源语言</label>
+        <select id="sel-source"></select>
+      </div>
+      <button class="swap" id="btn-swap" title="交换语言">
+        <svg viewBox="0 0 20 20" width="15" height="15" fill="none">
+          <path d="M4 7h11l-3-3M16 13H5l3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="lang-select">
+        <label>目标语言</label>
+        <select id="sel-target"></select>
+      </div>
+    </div>
+
+    <!-- 展示模式 -->
+    <div class="field">
+      <div class="field-label">展示方式</div>
+      <div class="seg" id="seg-mode">
+        <button data-v="bilingual">双语对照</button>
+        <button data-v="replace">替换原文</button>
+        <button data-v="hover">悬停查看</button>
+      </div>
+    </div>
+
+    <!-- 直播字幕 -->
+    <div class="live-card" id="live-card">
+      <div class="live-info">
+        <span class="live-title">直播字幕翻译 <span class="live-dot" id="live-dot"></span></span>
+        <span class="live-sub" id="live-sub">捕获本页声音 → 实时转写翻译</span>
+      </div>
+      <button class="live-btn" id="btn-live" title="开始 / 停止（也可右键菜单或 Alt+Shift+L）">开始</button>
+    </div>
+
+    <!-- 引擎 -->
+    <div class="field">
+      <div class="field-label">翻译引擎</div>
+      <div class="engine-row">
+        <select id="sel-engine"></select>
+        <a href="#" class="manage" id="btn-manage">管理</a>
+      </div>
+      <div class="engine-hint" id="engine-hint"></div>
+    </div>
+
+    <div class="page-hint hidden" id="page-hint">当前页面暂不支持翻译（浏览器内部页面或尚未刷新）</div>
+  </main>
+
+  <footer>
+    <span class="kbd">Alt+Shift+Y</span>
+    <span class="dot-sep"></span>
+    <span>Alt+Shift+L 直播字幕</span>
+    <span class="dot-sep"></span>
+    <span>v<span id="ver">1.0.0</span></span>
+    <span class="grow"></span>
+    <span class="by">blank_xp</span>
+  </footer>
+
+  <script src="../shared/preview-shim.js"></script>
+  <script src="../shared/langs.js"></script>
+  <script src="../shared/defaults.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

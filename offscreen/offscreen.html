@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>BPFlow Offscreen</title>
+</head>
+<body>
+  <!--
+    BPFlow offscreen 文档：
+    消费 tabCapture 的 MediaStreamId，捕获标签页音频；
+    通过 <audio> 回放保证用户仍能听到页面声音；
+    分片录音（约 5s/片）→ Whisper 兼容 /audio/transcriptions 转写 → 交回 background 翻译。
+  -->
+  <script src="offscreen.js"></script>
+</body>
+</html>

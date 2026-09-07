@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BPFlow · 多语言测试页</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Georgia, 'Times New Roman', 'PingFang SC', 'Microsoft YaHei', serif;
+      background: #faf9f6; color: #2b2b2b;
+      max-width: 720px; margin: 0 auto; padding: 60px 24px 100px;
+      line-height: 1.8;
+    }
+    h1 { font-size: 30px; margin-bottom: 8px; }
+    .sub { color: #8a8578; font-size: 14px; margin-bottom: 40px; font-family: -apple-system, 'Segoe UI', sans-serif; }
+    h2 { font-size: 20px; margin: 44px 0 14px; padding-top: 24px; border-top: 1px solid #e8e4da; }
+    p { margin-bottom: 12px; font-size: 16.5px; }
+    blockquote {
+      border-left: 3px solid #c9c2b2; padding-left: 18px; margin: 18px 0;
+      color: #6a655a; font-style: italic;
+    }
+    ul { padding-left: 22px; margin: 10px 0 18px; }
+    li { margin-bottom: 8px; }
+    .tip {
+      background: #f0ede4; border-radius: 10px; padding: 16px 20px;
+      font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 13.5px; color: #7d7767; line-height: 1.9;
+    }
+    .tip b { color: #4a4536; }
+    code { background: #ece8dc; border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>The Polyglot Reader</h1>
+  <div class="sub">A multilingual page for testing BPFlow · 多语言翻译测试页</div>
+
+  <div class="tip">
+    <b>使用方法：</b>安装扩展后，点击工具栏中的 BPFlow 图标（或页面右下角悬浮球），选择目标语言，
+    点击「翻译本页」。快捷键 <code>Alt+Shift+Y</code> 可快速翻译/还原；选中任意文字后右键可划词翻译。
+  </div>
+
+  <h2>English</h2>
+  <p>The quick brown fox jumps over the lazy dog. This sentence contains every letter of the English alphabet, making it a classic pangram for testing typography and translation alike.</p>
+  <p>Machine translation has come a long way since its early days. Modern neural networks can capture nuance, tone, and even cultural context, turning what was once a clunky tool into something genuinely useful for reading foreign content.</p>
+  <blockquote>Simplicity is the ultimate sophistication. — Leonardo da Vinci</blockquote>
+  <ul>
+    <li>Try switching between bilingual, replace, and hover display modes.</li>
+    <li>Try different translation engines in the settings panel.</li>
+    <li>Watch how new paragraphs get translated as you scroll and content loads.</li>
+  </ul>
+
+  <h2>日本語</h2>
+  <p>春はあけぼの。やうやう白くなりゆく山際、少し明かりて、紫だちたる雲の細くたなびきたる。</p>
+  <p>これは清少納言の「枕草子」の冒頭の一節です。千年以上前の日本語ですが、現代の翻訳モデルはこのような古典的な文章であっても、その情趣を損なわずに現代語へと訳すことができます。</p>
+  <p>最近の翻訳技術の進歩は目覚ましく、専門用語や慣用句も自然に扱えるようになりました。ブラウザ上でリアルタイムに外国語の記事を読めるのは、もはや夢物語ではありません。</p>
+
+  <h2>Deutsch</h2>
+  <p>Die Welt ist schön, aber auch seltsam. Über den Wolken muss die Freiheit wohl grenzenlos sein, sang einst ein deutscher Musiker, und Millionen stimmten ihm zu.</p>
+  <p>Die deutsche Sprache ist bekannt für ihre langen Wörter und präzisen Grammatikregeln. Donaudampfschifffahrtsgesellschaftskapitän — ein einziges Wort, das auf Englisch einen ganzen Satz benötigt.</p>
+
+  <h2>Français</h2>
+  <p>Paris est une fête, écrivait Ernest Hemingway. La ville lumière continue d'attirer des millions de visiteurs chaque année, fascinés par ses cafés, ses boulevards et son charme intemporel.</p>
+  <p>La langue française est souvent décrite comme la langue de l'amour et de la diplomatie. Sa grammaire complexe et son vocabulaire riche en font un défi passionnant pour les traducteurs automatiques.</p>
+
+  <h2>Mixed &amp; Dynamic</h2>
+  <p>下面的段落用于测试中英混排：This paragraph mixes 中文 and English naturally — 很多人日常的阅读场景就是这样，切换引擎后看看译文质量是否有差异。</p>
+  <p id="dynamic-demo">↓ 点击按钮，模拟 SPA 动态加载新内容（测试增量翻译）：</p>
+  <button onclick="addDynamic()" style="padding:10px 22px;border:none;border-radius:8px;background:#2b2b2b;color:#fff;cursor:pointer;font-size:14px;">加载动态内容</button>
+  <div id="dynamic-area" style="margin-top:16px;"></div>
+
+  <script>
+    let n = 0;
+    function addDynamic() {
+      n++;
+      const texts = [
+        'Dynamically loaded content number one: the best way to predict the future is to invent it.',
+        'Second dynamic block: knowledge is power, but enthusiasm pulls the switch.',
+        'Third one — stay hungry, stay foolish. Keep translating!'
+      ];
+      const p = document.createElement('p');
+      p.textContent = texts[(n - 1) % texts.length];
+      document.getElementById('dynamic-area').appendChild(p);
+    }
+  </script>
+</body>
+</html>
