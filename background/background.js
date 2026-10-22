@@ -1,40 +1,81 @@
 /*
  * BPFlow — Background Service Worker (MV3)
- * 职责：翻译引擎适配 / 批量调度与并发控制 / 译文缓存 / 快捷键 / 右键菜单
+ * 职责：批量调度与并发控制 / 译文缓存 / 直播会话 / 快捷键 / 右键菜单
+ * 引擎适配在 engines.js，纯函数（缓存键、分片）在 shared/translate-core.js
  */
-/* global LF, LF_DEFAULTS, LF_MERGE, LF_RESOLVE_VOICE, LF_MIGRATE_SETTINGS */
-importScripts('../shared/langs.js', '../shared/defaults.js');
+/* global LF_DEFAULTS, LF_MERGE, LF_RESOLVE_VOICE, LF_MIGRATE_SETTINGS,
+   LF_SPLIT_SECRETS, LF_APPLY_SECRETS, LF_MERGE_SECRETS, LF_VALIDATE_ENDPOINT, LF_CORE, LF_ENGINES */
+importScripts('../shared/langs.js', '../shared/defaults.js', '../shared/translate-core.js', 'engines.js');
 /* 注：MV3 Service Worker 默认严格模式 */
+
+const { cacheKey, chunkTexts, splitLongText, joinParts } = LF_CORE;
 
 /* ============================== 设置 ============================== */
 
-async function getSettings() {
+/*
+ * 存储分层：
+ *   chrome.storage.sync['settings']  —— 公开设置（语言/样式/引擎名/站点规则…）
+ *   chrome.storage.local['lf:secrets'] —— 只放 API Key，不参与账号同步
+ * 内容脚本/弹窗只拿公开设置，永远看不到密钥。
+ */
+const SECRET_KEY = 'lf:secrets';
+
+let _secrets = null;        // 内存缓存，local 变更时失效
+let _secretsMigrated = false;
+
+async function readSecrets() {
+  if (_secrets) return _secrets;
+  try {
+    const o = await chrome.storage.local.get(SECRET_KEY);
+    _secrets = LF_MERGE_SECRETS({}, (o && o[SECRET_KEY]) || {});
+  } catch (e) {
+    _secrets = LF_MERGE_SECRETS();
+  }
+  return _secrets;
+}
+
+async function readPublicSettings() {
   const o = await chrome.storage.sync.get('settings');
   return LF_MIGRATE_SETTINGS(LF_MERGE(LF_DEFAULTS, (o && o.settings) || {}));
 }
 
-async function saveSettingsPatch(patch) {
-  const cur = await getSettings();
-  const next = LF_MERGE(cur, patch);
-  await chrome.storage.sync.set({ settings: next });
-  return next;
+/** 老版本把 API Key 存在 sync 里：一次性搬到 local，并从 sync 抹掉 */
+async function migrateSecretsOnce(pub) {
+  if (_secretsMigrated) return pub;
+  const split = LF_SPLIT_SECRETS(pub);
+  if (!split.hadKeys) { _secretsMigrated = true; return pub; }
+  const secrets = LF_MERGE_SECRETS(await readSecrets(), split.secrets);
+  try {
+    // 顺序很关键：本地没落盘就绝不从 sync 删，否则用户的 Key 会被彻底抹掉。
+    // 失败时保持 _secretsMigrated 为 false，下次调用再试。
+    await chrome.storage.local.set({ [SECRET_KEY]: secrets });
+  } catch (e) {
+    console.log('[LF-BG] 密钥迁移失败，保留 sync 中的旧值稍后重试：' + ((e && e.message) || e));
+    return pub;
+  }
+  _secrets = secrets;
+  try { await chrome.storage.sync.set({ settings: split.pub }); } catch (e) { /* 下次启动会再清一次，无副作用 */ }
+  _secretsMigrated = true;
+  console.log('[LF-BG] 已把 API Key 从 storage.sync 迁移到本地（不再随 Chrome 账号同步）');
+  return split.pub;
 }
+
+/** 完整设置（含密钥）：仅供后台自己使用 */
+async function getSettings() {
+  const pub = await migrateSecretsOnce(await readPublicSettings());
+  return LF_APPLY_SECRETS(pub, await readSecrets());
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[SECRET_KEY]) _secrets = null;
+});
 
 /* ============================== 缓存 ============================== */
 
 let _cache = null;          // Map（LRU，插入序即访问序）
 let _cacheSaveTimer = null;
 
-function cacheKey(prov, source, target, text) {
-  const id = prov.id + ':' + (prov.model || '') + ':' + source + '>' + target;
-  return hashStr(id + '\u0001' + text);
-}
-
-function hashStr(s) {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36) + '_' + s.length.toString(36);
-}
+/* 缓存键 / 分片等纯函数见 shared/translate-core.js（LF_CORE） */
 
 async function loadCache() {
   if (_cache) return _cache;
@@ -54,209 +95,23 @@ function scheduleCacheSave() {
 
 async function flushCache() {
   if (!_cache) return;
-  const max = (await getSettings()).advanced.maxCache || 800;
-  while (_cache.size > max) {
-    _cache.delete(_cache.keys().next().value); // 淘汰最旧
+  // 双保险：导入校验已是第一道闸，这里再夹一次 —— maxCache<=0 时
+  // `while (size > max)` 在空 Map 上恒真（delete(undefined) 不改变 size），会卡死 SW。
+  const raw = (await getSettings()).advanced.maxCache;
+  const n = Number(raw);
+  const max = Number.isFinite(n) ? Math.max(50, Math.min(5000, Math.round(n))) : 800;
+  let guard = _cache.size + 1;
+  while (_cache.size > max && guard-- > 0) {
+    const oldest = _cache.keys().next().value;
+    if (oldest === undefined) break; // 空缓存兜底，绝不空转
+    _cache.delete(oldest); // 淘汰最旧
   }
   try {
     await chrome.storage.local.set({ 'lf:cache': Array.from(_cache.entries()).slice(-max) });
   } catch (e) { /* 存储满时静默 */ }
 }
 
-/* ============================== 引擎适配 ============================== */
-
-const ENGINE_API = {
-  'bing-free':   { batch: 20, maxChars: 40000 },
-  'google-free': { batch: 1 },
-  'mymemory':    { batch: 1, maxChars: 450 },
-  'deepl':       { batch: 25, maxChars: 25000 },
-  'openai':      { batch: 16, maxChars: 6000 }
-};
-
-async function fetchJSON(url, options, timeoutMs) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs || 20000);
-  try {
-    const res = await fetch(url, Object.assign({}, options, { signal: ctrl.signal }));
-    let body = null;
-    const text = await res.text();
-    try { body = JSON.parse(text); } catch (e) { body = text; }
-    if (!res.ok) {
-      const err = new Error(humanError(res.status, body));
-      err.status = res.status;
-      throw err;
-    }
-    return body;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function humanError(status, body) {
-  let detail = '';
-  if (body && typeof body === 'object') {
-    detail = (body.error && (body.error.message || body.error.type)) || body.message || '';
-  } else if (typeof body === 'string' && body.length < 200) {
-    detail = body;
-  }
-  if (status === 401 || status === 403) return 'API Key 无效或未授权（' + (detail || status) + '）';
-  if (status === 429) return '请求过于频繁，已被限流，请稍后重试';
-  if (status === 404) return '接口地址或模型名不存在（' + (detail || status) + '）';
-  if (status >= 500) return '翻译服务暂时不可用（HTTP ' + status + '）';
-  return '请求失败：HTTP ' + status + (detail ? ' — ' + detail : '');
-}
-
-/* ---------- Bing（免费，Edge 同源接口） ---------- */
-
-let _bingToken = null; // {token, exp}
-
-async function bingToken() {
-  const now = Date.now();
-  if (_bingToken && _bingToken.exp > now + 30000) return _bingToken.token;
-  const res = await fetch('https://edge.microsoft.com/translate/auth');
-  if (!res.ok) throw new Error('无法获取 Bing 翻译令牌（HTTP ' + res.status + '）');
-  const token = (await res.text()).trim();
-  // JWT 有效期约 10 分钟，保守按 8 分钟计
-  _bingToken = { token, exp: now + 8 * 60 * 1000 };
-  return token;
-}
-
-async function callBing(texts, source, target) {
-  const token = await bingToken();
-  let url = 'https://api-edge.cognitive.microsofttranslator.com/translate?api-version=3.0&to=' + encodeURIComponent(LF.toBing(target));
-  if (source && source !== 'auto') url += '&from=' + encodeURIComponent(LF.toBing(source));
-  const data = await fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify(texts.map((t) => ({ Text: t })))
-  });
-  if (!Array.isArray(data)) throw new Error('Bing 翻译返回格式异常');
-  return data.map((item, i) => (item && item.translations && item.translations[0] && item.translations[0].text) != null
-    ? item.translations[0].text : texts[i]);
-}
-
-/* ---------- Google（免费公共接口，逐句） ---------- */
-
-async function callGoogle(text, source, target) {
-  const sl = (!source || source === 'auto') ? 'auto' : source;
-  const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&dt=t'
-    + '&sl=' + encodeURIComponent(sl) + '&tl=' + encodeURIComponent(target)
-    + '&q=' + encodeURIComponent(text);
-  const data = await fetchJSON(url, { method: 'GET' });
-  if (!Array.isArray(data) || !Array.isArray(data[0])) throw new Error('Google 翻译返回格式异常');
-  return data[0].map((seg) => (seg && seg[0]) || '').join('');
-}
-
-/* ---------- MyMemory（免费，逐句，不支持 auto） ---------- */
-
-async function callMyMemory(text, source, target) {
-  const src = (!source || source === 'auto') ? LF.quickDetect(text) : source;
-  const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text)
-    + '&langpair=' + encodeURIComponent(src + '|' + target);
-  const data = await fetchJSON(url, { method: 'GET' });
-  if (data && data.responseData && data.responseData.translatedText) {
-    return data.responseData.translatedText;
-  }
-  throw new Error('MyMemory 翻译失败');
-}
-
-/* ---------- DeepL ---------- */
-
-async function callDeepl(prov, texts, source, target) {
-  if (!prov.apiKey) throw new Error('请先在设置中填写 DeepL API Key');
-  const base = prov.plan === 'pro' ? 'https://api.deepl.com' : 'https://api-free.deepl.com';
-  const body = { text: texts, target_lang: LF.toDeepl(target) };
-  if (source && source !== 'auto') body.source_lang = LF.toDeepl(source);
-  const data = await fetchJSON(base + '/v2/translate', {
-    method: 'POST',
-    headers: { 'Authorization': 'DeepL-Auth-Key ' + prov.apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!data || !Array.isArray(data.translations)) throw new Error('DeepL 返回格式异常');
-  return data.translations.map((t, i) => (t && t.text) || texts[i]);
-}
-
-/* ---------- OpenAI 兼容（自定义模型） ---------- */
-
-function extractJsonArray(raw) {
-  if (Array.isArray(raw)) return raw;
-  const s = String(raw || '').trim();
-  // 剥掉 ```json 围栏
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const body = fence ? fence[1].trim() : s;
-  const m = body.match(/\[[\s\S]*\]/);
-  if (!m) return null;
-  try {
-    const arr = JSON.parse(m[0]);
-    return Array.isArray(arr) ? arr : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-async function callOpenAI(prov, texts, source, target) {
-  if (!prov.baseUrl) throw new Error('请先在设置中填写接口地址（Base URL）');
-  if (!prov.model) throw new Error('请先在设置中填写模型名称');
-
-  const srcName = (!source || source === 'auto') ? '自动识别的源语言' : LF.langName(source);
-  const tgtName = LF.langName(target);
-
-  let sys;
-  if (prov.promptTemplate && prov.promptTemplate.trim()) {
-    sys = prov.promptTemplate
-      .replace(/\{source\}/g, srcName)
-      .replace(/\{target\}/g, tgtName)
-      .replace(/\{texts\}/g, JSON.stringify(texts));
-  } else {
-    sys = '你是一个专业的网页翻译引擎。请将用户给出的 JSON 字符串数组中的每段文本从' + srcName + '翻译为' + tgtName
-      + '。要求：忠实原意、符合' + tgtName + '表达习惯、保留专有名词与数字格式、不添加任何解释。'
-      + '仅输出一个等长的 JSON 字符串数组（' + texts.length + ' 个元素），不要输出其他任何内容。';
-  }
-
-  const url = String(prov.baseUrl).replace(/\/+$/, '') + '/chat/completions';
-  const data = await fetchJSON(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(prov.apiKey ? { 'Authorization': 'Bearer ' + prov.apiKey } : {})
-    },
-    body: JSON.stringify({
-      model: prov.model,
-      temperature: typeof prov.temperature === 'number' ? prov.temperature : 0.1,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: JSON.stringify(texts) }
-      ]
-    })
-  }, 45000);
-
-  const content = data && data.choices && data.choices[0] && data.choices[0].message
-    && data.choices[0].message.content;
-  const arr = extractJsonArray(content);
-  if (!arr || arr.length !== texts.length) {
-    // 兜底：按行拆分
-    const lines = String(content || '').split(/\n+/).map((s) => s.replace(/^\s*\d+[.、)\]]\s*/, '').trim()).filter(Boolean);
-    if (lines.length === texts.length) return lines;
-    throw new Error('模型返回的译文数量与输入不一致（期望 ' + texts.length + '，实际 ' + (arr ? arr.length : '?') + '），请更换模型或调整提示词');
-  }
-  return arr.map((x) => (typeof x === 'string' ? x : x == null ? '' : String(x)));
-}
-
 /* ============================== 批量调度 ============================== */
-
-function chunkTexts(texts, batch, maxChars) {
-  const chunks = [];
-  let cur = [], curLen = 0;
-  for (const t of texts) {
-    const len = t.length;
-    if (cur.length && (cur.length >= batch || (maxChars && curLen + len > maxChars))) {
-      chunks.push(cur); cur = []; curLen = 0;
-    }
-    cur.push(t); curLen += len;
-  }
-  if (cur.length) chunks.push(cur);
-  return chunks;
-}
 
 /** 并发池执行 */
 async function runPool(tasks, limit) {
@@ -274,9 +129,12 @@ async function runPool(tasks, limit) {
 
 /**
  * 核心翻译入口
+ * @param {string[]} texts
+ * @param {?object} overrideProvider 指定引擎（「测试连接」用）
+ * @param {{bypassCache?: boolean}} [opts] bypassCache：测试连接必须绕缓存，否则会假成功
  * @returns {Promise<{ok:boolean, results:?string[], error:?string, stats:object}>}
  */
-async function translateTexts(texts, overrideProvider) {
+async function translateTexts(texts, overrideProvider, opts) {
   const settings = await getSettings();
   const prov = overrideProvider
     || settings.providers.find((p) => p.id === settings.activeProviderId && p.enabled !== false)
@@ -285,67 +143,83 @@ async function translateTexts(texts, overrideProvider) {
 
   const source = settings.sourceLang || 'auto';
   const target = settings.targetLang || 'zh-CN';
-  const api = ENGINE_API[prov.type] || { batch: 10 };
+  const api = LF_ENGINES.API[prov.type] || { batch: 10 };
   const concurrency = Math.max(1, Math.min(8, settings.advanced.concurrency || 4));
 
-  const useCache = settings.advanced.cacheEnabled !== false;
+  const useCache = !(opts && opts.bypassCache) && settings.advanced.cacheEnabled !== false;
   const cache = useCache ? await loadCache() : null;
 
   const results = new Array(texts.length);
   const needIdx = [];   // 需要真实请求的下标
   texts.forEach((t, i) => {
-    const key = cacheKey(prov, source, target, t);
-    const hit = cache && cache.get(key);
-    if (hit != null) {
-      cache.delete(key); cache.set(key, hit); // LRU 刷新
-      results[i] = hit;
-    } else {
-      needIdx.push(i);
+    if (cache) {
+      const key = cacheKey(prov, source, target, t);
+      const hit = cache.get(key);
+      if (hit != null) {
+        cache.delete(key); cache.set(key, hit); // LRU 刷新
+        results[i] = hit;
+        return;
+      }
     }
+    needIdx.push(i);
   });
 
   let fetched = 0, failed = 0;
   if (needIdx.length) {
-    const needTexts = needIdx.map((i) => texts[i]);
-    const chunks = chunkTexts(needTexts, api.batch, api.maxChars);
+    // 超长文本先按句切分，再按 (原文下标, 第几片) 记账
+    const units = [];
+    needIdx.forEach((origIdx) => {
+      const t = texts[origIdx];
+      const parts = (api.maxChars && t.length > api.maxChars) ? splitLongText(t, api.maxChars) : [t];
+      parts.forEach((p, pi) => units.push({ idx: origIdx, part: pi, total: parts.length, text: p }));
+    });
+    const chunks = chunkTexts(units.map((u) => u.text), api.batch, api.maxChars);
 
     const chunkResults = await runPool(chunks.map((chunk) => async () => {
       try {
-        let out;
-        if (prov.type === 'bing-free') out = await callBing(chunk, source, target);
-        else if (prov.type === 'google-free') out = [await callGoogle(chunk[0], source, target)];
-        else if (prov.type === 'mymemory') out = [await callMyMemory(chunk[0], source, target)];
-        else if (prov.type === 'deepl') out = await callDeepl(prov, chunk, source, target);
-        else if (prov.type === 'openai') out = await callOpenAI(prov, chunk, source, target);
-        else throw new Error('未知引擎类型：' + prov.type);
+        const out = await LF_ENGINES.callEngine(prov, chunk, source, target);
         return { ok: true, out };
       } catch (e) {
         return { ok: false, error: e && e.message ? e.message : String(e) };
       }
     }), prov.type === 'openai' ? Math.min(2, concurrency) : concurrency);
 
-    // 按序重建：chunks[i] 与 chunkResults[i] 一一对应
+    // 逐片回填，再按原文聚合：chunks[i] 与 chunkResults[i] 一一对应，units 顺序同 chunks 展开
+    const bags = new Map();
     let firstError = null;
     let cursor = 0;
     chunkResults.forEach((r, ci) => {
       const n = chunks[ci].length;
       for (let k = 0; k < n; k++) {
-        const globalIdx = needIdx[cursor + k];
+        const u = units[cursor + k];
+        let bag = bags.get(u.idx);
+        if (!bag) {
+          bag = { parts: new Array(u.total).fill(null), total: u.total, broken: false };
+          bags.set(u.idx, bag);
+        }
         if (r.ok) {
           const val = r.out[k] != null ? r.out[k] : null;
-          results[globalIdx] = val;
-          if (val != null) {
-            fetched++;
-            if (cache) { cache.set(cacheKey(prov, source, target, texts[globalIdx]), val); }
-          } else { failed++; }
+          if (val == null) bag.broken = true;
+          else bag.parts[u.part] = val;
         } else {
-          results[globalIdx] = null;
-          failed++;
+          bag.broken = true;
           if (!firstError) firstError = r.error;
         }
       }
       cursor += n;
     });
+
+    needIdx.forEach((origIdx) => {
+      const bag = bags.get(origIdx);
+      const complete = bag && !bag.broken && bag.parts.every((p) => p != null);
+      if (!complete) { results[origIdx] = null; failed++; return; }
+      const val = bag.total > 1 ? joinParts(bag.parts) : bag.parts[0];
+      results[origIdx] = val;
+      fetched++;
+      // 切分后的原文整体入缓存：同一段长文下次直接命中，不再重复切分请求
+      if (cache) cache.set(cacheKey(prov, source, target, texts[origIdx]), val);
+    });
+
     if (cache && fetched) scheduleCacheSave();
     if (fetched === 0 && firstError) {
       return { ok: false, error: firstError, results: null };
@@ -371,6 +245,23 @@ async function translateTexts(texts, overrideProvider) {
 /* 直播中的标签页：存 chrome.storage.session，避免 Service Worker 休眠后状态丢失 */
 const LIVE_KEY = 'lf:live';
 
+/**
+ * 同一标签页的字幕任务串行执行。
+ * offscreen 已按分片序号顺序发送，但每条翻译耗时不同——并发执行会让后一片先翻完、
+ * 先推给页面，字幕就倒序了。这里按 tabId 排成 Promise 链，顺序与分片顺序一致。
+ */
+const asrChains = new Map();
+
+function queueAsr(tabId, task) {
+  const prev = asrChains.get(tabId) || Promise.resolve();
+  const next = prev.then(task, task).catch((e) => {
+    console.log('[LF-BG] 字幕任务异常：' + ((e && e.message) || String(e)));
+  });
+  asrChains.set(tabId, next);
+  next.then(() => { if (asrChains.get(tabId) === next) asrChains.delete(tabId); });
+  return next;
+}
+
 async function readLive() {
   try {
     const o = await chrome.storage.session.get(LIVE_KEY);
@@ -382,8 +273,29 @@ async function writeLive(map) {
   try { await chrome.storage.session.set({ [LIVE_KEY]: map }); } catch (e) { /* noop */ }
 }
 
+/**
+ * 是否已存在 offscreen 文档。
+ * 优先 runtime.getContexts（Chrome 116+，与 tabCapture→offscreen 链路要求的版本一致），
+ * 不用 chrome.offscreen.hasDocument()——该方法在不同 Chrome 版本上可用性不一致
+ * （官方文档标注 Chrome 150+），低版本直接是 TypeError。
+ */
+async function hasOffscreenDocument() {
+  try {
+    if (chrome.runtime.getContexts) {
+      const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+      if (ctx && ctx.length) return true;
+    }
+  } catch (e) { /* noop */ }
+  // 兜底：offscreen 文档是 SW 的 client，按扩展内 URL 前缀匹配
+  try {
+    const clients = await self.clients.matchAll();
+    const prefix = chrome.runtime.getURL('offscreen/');
+    return clients.some((c) => c.url.indexOf(prefix) === 0);
+  } catch (e) { return false; }
+}
+
 async function ensureOffscreen() {
-  const has = await chrome.offscreen.hasDocument();
+  const has = await hasOffscreenDocument();
   if (!has) {
     await chrome.offscreen.createDocument({
       url: 'offscreen/offscreen.html',
@@ -427,19 +339,28 @@ async function resolveTabId(sender, msg) {
   } catch (e) { return null; }
 }
 
-/** tabCapture 的错误对用户几乎不可读，转换为可执行建议 */
-function friendlyCaptureError(raw) {
+/**
+ * tabCapture 的错误对用户几乎不可读 → 转成可执行建议 + 机器可读 code。
+ * code 供内容脚本判断是否要显示「先唤起扩展」的引导。
+ */
+function captureErrorInfo(raw) {
   const s = String(raw || '');
   if (/not been invoked|activeTab/i.test(s)) {
-    return '浏览器安全要求：需先「唤起」扩展才能捕获页面声音。请通过工具栏弹窗、右键菜单或 Alt+Shift+L 启动直播字幕';
+    return {
+      code: 'needInvocation',
+      error: '浏览器安全要求：需先「唤起」扩展才能捕获页面声音。请点工具栏的 BPFlow 图标 → 开始，或按 Alt+Shift+L / 右键菜单启动'
+    };
   }
   if (/active stream|already captur/i.test(s)) {
-    return '本页已有未释放的音频捕获（常见于扩展重载或上一次会话异常退出）。请刷新本页（F5）后重新开启直播字幕';
+    return {
+      code: 'busy',
+      error: '本页已有未释放的音频捕获（常见于扩展重载或上一次会话异常退出）。请刷新本页（F5）后重新开启直播字幕'
+    };
   }
   if (/Chrome pages|chrome:\/\//i.test(s)) {
-    return '浏览器内部页面（chrome:// 等）无法捕获声音，请在普通网页上使用';
+    return { code: 'internalPage', error: '浏览器内部页面（chrome:// 等）无法捕获声音，请在普通网页上使用' };
   }
-  return s;
+  return { code: 'unknown', error: s };
 }
 
 /* 并发启动锁：防止弹窗与快捷键同时触发导致双重捕获（第二次会报 active stream） */
@@ -486,15 +407,22 @@ async function startLiveForTabInner(tabId) {
         + '请到 设置 → 视频直播 改用 fun-asr-flash-2026-06-15'
     };
   }
-  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(voice.baseUrl)
-    || /^wss?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(voice.baseUrl);
-  if (!voice.apiKey && !isLocal) {
+  // 接口地址安全校验：远程必须 https，否则 Key 与录音数据会明文外发
+  const ep = LF_VALIDATE_ENDPOINT(voice.baseUrl);
+  if (!ep.ok) {
+    liveLog(tabId, '启动中止：接口地址不合规（' + ep.error + '）');
+    return { ok: false, error: '语音转写接口地址不安全：' + ep.error };
+  }
+  if (!voice.apiKey && !ep.local) {
     liveLog(tabId, '启动中止：非本地引擎缺少 API Key');
     return { ok: false, error: '语音转写需要 API Key，请到 设置 → 视频直播 填写' };
   }
 
   await ensureOffscreen();
   liveLog(tabId, 'offscreen 文档就绪');
+
+  // 会话代号：随消息贯穿 offscreen → 后台，用于丢弃「停止后才返回」的迟到转写结果
+  const gen = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
   let streamId;
   try {
@@ -507,12 +435,13 @@ async function startLiveForTabInner(tabId) {
     });
     liveLog(tabId, '已获取页面音频捕获授权（MediaStreamId）');
   } catch (e) {
+    const info = captureErrorInfo(e && e.message);
     liveLog(tabId, '音频捕获授权失败：' + ((e && e.message) || String(e)));
-    return { ok: false, error: friendlyCaptureError(e && e.message) };
+    return { ok: false, code: info.code, error: info.error };
   }
 
   const r = await new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'lf:off:start', tabId, streamId, voice },
+    chrome.runtime.sendMessage({ type: 'lf:off:start', tabId, streamId, voice, gen },
       (res) => { void chrome.runtime.lastError; resolve(res || null); });
   });
   liveLog(tabId, 'offscreen 捕获结果：' + JSON.stringify(r));
@@ -520,9 +449,9 @@ async function startLiveForTabInner(tabId) {
     return { ok: false, error: (r && r.error) || '音频捕获失败' };
   }
 
-  live[tabId] = true;
+  live[tabId] = { gen, at: Date.now() };
   await writeLive(live);
-  notifyTab(tabId, { type: 'lf:liveStarted' });
+  notifyTab(tabId, { type: 'lf:liveStarted', gen });
   liveLog(tabId, '直播翻译已启动 ✓（每 5 秒一片：录音→转写→翻译→上屏，日志见本页 F12 Console）');
   return { ok: true };
 }
@@ -548,7 +477,7 @@ async function toggleLiveForTab(tabId) {
     return { ok: true, live: false };
   }
   const r = await startLiveForTab(tabId);
-  return { ok: r.ok, live: !!r.ok, error: r.error };
+  return { ok: r.ok, live: !!r.ok, error: r.error, code: r.code };
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -567,7 +496,7 @@ async function cleanupStaleLive() {
     const live = await readLive();
     const ids = Object.keys(live);
     if (!ids.length) return;
-    const hasOffscreen = await chrome.offscreen.hasDocument();
+    const hasOffscreen = await hasOffscreenDocument();
     if (!hasOffscreen) {
       await writeLive({});
       console.log('[LF-BG] 启动清理：回收残留直播状态 ' + ids.join(','));
@@ -590,12 +519,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse(r);
           break;
         }
+        case 'lf:getSettings': {
+          // 内容脚本 / 弹窗只拿公开设置：其中绝不含 apiKey（密钥在 storage.local）
+          // 必须先跑一次密钥迁移：调用方拿到的是「无密钥副本」，随后会把它整体写回 sync，
+          // 老版本升级后若先打开弹窗改个语言，未迁移就等于把旧密钥永久抹掉。
+          const pub = await migrateSecretsOnce(await readPublicSettings());
+          sendResponse({ ok: true, settings: LF_SPLIT_SECRETS(pub).pub });
+          break;
+        }
         case 'lf:testProvider': {
           const settings = await getSettings();
           const prov = settings.providers.find((p) => p.id === msg.providerId);
           if (!prov) return sendResponse({ ok: false, error: '未找到该引擎' });
           const t0 = Date.now();
-          const r = await translateTexts(['Hello! This is a connection test.'], prov);
+          // 必须绕缓存：否则改完配置点「测试」会直接返回旧译文，造成"测试通过"的假象
+          const r = await translateTexts(['Hello! This is a connection test.'], prov, { bypassCache: true });
           const ms = Date.now() - t0;
           if (r.ok && r.results && r.results[0]) {
             sendResponse({ ok: true, sample: r.results[0], ms });
@@ -647,16 +585,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const tabId = msg.tabId;
           const text = String(msg.text || '').trim();
           if (!tabId || !text) break;
-          liveLog(tabId, '收到转写文本：' + JSON.stringify(text.length > 120 ? text.slice(0, 120) + '…' : text));
-          const r = await translateTexts([text.slice(0, 1500)]);
-          const translated = (r.ok && r.results && r.results[0] != null) ? r.results[0] : null;
-          if (translated != null) {
-            liveLog(tabId, '翻译成功（' + ((r.stats && r.stats.cacheHits) ? '缓存命中' : '实时请求，引擎=' + (r.stats && r.stats.engine))
-              + '）：' + JSON.stringify(translated.length > 120 ? translated.slice(0, 120) + '…' : translated));
-          } else {
-            liveLog(tabId, '翻译失败：' + ((r && r.error) || '引擎返回空结果'));
+          const liveNow = await readLive();
+          const cur = liveNow[tabId];
+          // 会话已停止（或被新一轮直播取代）→ 丢弃迟到结果，避免「停止后仍在出字幕」
+          if (!cur || (msg.gen && cur.gen && msg.gen !== cur.gen)) {
+            liveLog(tabId, '丢弃迟到转写结果（会话已结束或已更换）');
+            sendResponse({ ok: false, dropped: true });
+            break;
           }
-          notifyTab(tabId, { type: 'lf:liveCaption', original: text, translated, speechAt: msg.speechAt });
+          // 串行处理：保证「先录制的分片先上屏」，同时天然限制同一标签页的翻译并发
+          await queueAsr(tabId, async () => {
+            const before = await readLive();
+            const c0 = before[tabId];
+            if (!c0 || (msg.gen && c0.gen && msg.gen !== c0.gen)) {
+              liveLog(tabId, '排队期间会话已结束，丢弃该条字幕');
+              return;
+            }
+            liveLog(tabId, '收到转写文本：' + JSON.stringify(text.length > 120 ? text.slice(0, 120) + '…' : text));
+            const r = await translateTexts([text.slice(0, 1500)]);
+            // 翻译期间用户可能已点停止：返回后再校验一次，宁可丢一条也不上屏
+            const liveAfter = await readLive();
+            const still = liveAfter[tabId];
+            if (!still || (msg.gen && still.gen && msg.gen !== still.gen)) {
+              liveLog(tabId, '翻译返回时会话已结束，丢弃该条字幕');
+              return;
+            }
+            const translated = (r.ok && r.results && r.results[0] != null) ? r.results[0] : null;
+            if (translated != null) {
+              liveLog(tabId, '翻译成功（' + ((r.stats && r.stats.cacheHits) ? '缓存命中' : '实时请求，引擎=' + (r.stats && r.stats.engine))
+                + '）：' + JSON.stringify(translated.length > 120 ? translated.slice(0, 120) + '…' : translated));
+            } else {
+              liveLog(tabId, '翻译失败：' + ((r && r.error) || '引擎返回空结果'));
+            }
+            notifyTab(tabId, { type: 'lf:liveCaption', original: text, translated, speechAt: msg.speechAt, gen: msg.gen });
+          });
           sendResponse({ ok: true });
           break;
         }
@@ -717,10 +679,10 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
-  // 初始化默认设置
+  // 初始化默认设置（只写公开部分，密钥留给 storage.local）
   const o = await chrome.storage.sync.get('settings');
   if (!o || !o.settings) {
-    await chrome.storage.sync.set({ settings: LF_DEFAULTS });
+    await chrome.storage.sync.set({ settings: LF_SPLIT_SECRETS(LF_DEFAULTS).pub });
   }
   // 右键菜单：划词翻译 + 直播字幕
   chrome.contextMenus.removeAll(() => {

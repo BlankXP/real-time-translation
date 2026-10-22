@@ -1,0 +1,52 @@
+# ---------- 依赖 ----------
+node_modules/
+jspm_packages/
+.pnpm-store/
+
+# ---------- Python（scripts/make_icons.py 用的 venv）----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ---------- 构建 / 打包产物 ----------
+*.zip
+*.crx
+*.pem
+dist/
+build/
+release/
+*.map
+
+# ---------- 编辑器 ----------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ---------- 系统 ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---------- 日志 / 临时 ----------
+*.log
+npm-debug.log*
+yarn-error.log*
+tmp/
+temp/
+*.tmp
+
+# ---------- WorkBuddy 本地工作区数据 ----------
+.workbuddy/

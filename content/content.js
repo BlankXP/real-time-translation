@@ -1,9 +1,14 @@
 /*
- * BPFlow — 内容脚本
- * 职责：DOM 文本块扫描 / 翻译应用（双语·替换·悬停）/ 悬浮球与快捷面板（Shadow DOM 隔离）
- *       划词翻译 / 增量翻译（MutationObserver）/ 站点规则
+ * BPFlow — 内容脚本主流程
+ * 职责：翻译调度与取消 / 悬浮球与快捷面板（Shadow DOM）/ 划词翻译 / 增量翻译 / 站点规则
  */
-/* global LF, LF_DEFAULTS, LF_MERGE */
+/* global LF, LF_DEFAULTS, LF_MERGE, LF_SCAN, LF_MARKS, LF_UI_CSS, LF_VIEW */
+/*
+ * 依赖 content/scan.js（LF_SCAN）：文本块扫描与脏块收集
+ *      content/marks.js（LF_MARKS）：译文落地
+ *      content/ui-css.js（LF_UI_CSS）：Shadow DOM 样式
+ *      content/ui-view.js（LF_VIEW）：面板/提示/浮条定位与语言下拉构建
+ */
 (() => {
   'use strict';
   if (!window.chrome || !chrome.runtime || !chrome.runtime.id) return;
@@ -22,24 +27,13 @@
     live: false         // 直播语音翻译进行中
   };
 
-  const SKIP_TAGS = new Set([
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'KBD', 'SAMP', 'VAR',
-    'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'BUTTON', 'SVG', 'CANVAS',
-    'IFRAME', 'AUDIO', 'VIDEO', 'IMG', 'META', 'LINK', 'TITLE', 'HEAD',
-    'OBJECT', 'TEMPLATE', 'EMBED', 'MAP', 'AREA'
-  ]);
+  /** 增量翻译的脏块集合（MutationObserver 收集，去抖后批量补翻） */
+  const dirty = new Set();
 
-  const BLOCK_TAGS = new Set([
-    'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'BLOCKQUOTE',
-    'FIGCAPTION', 'DD', 'DT', 'SUMMARY', 'DETAILS', 'FIGURE', 'DIV',
-    'SECTION', 'ARTICLE', 'ASIDE', 'MAIN'
-  ]);
-  const BLOCK_SELECTOR = 'p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,figcaption,dd,dt,summary,details,figure,div,section,article,aside,main';
 
   /* ============================== 工具 ============================== */
 
-  const $ = (sel, root) => (root || document).querySelector(sel);
-  const normText = (el) => String(el.textContent || '').replace(/\s+/g, ' ').trim();
+  const normText = LF_SCAN.textOf;
 
   function send(msg) {
     return new Promise((resolve) => {
@@ -58,14 +52,18 @@
   /* ============================== 设置 ============================== */
 
   async function ensureSettings() {
-    const o = await chrome.storage.sync.get('settings');
-    state.settings = LF_MERGE(LF_DEFAULTS, (o && o.settings) || {});
+    // 只取「公开设置」：后台已把 apiKey 剥离到 storage.local，内容脚本永远读不到密钥
+    const r = await send({ type: 'lf:getSettings' });
+    state.settings = LF_MERGE(LF_DEFAULTS, (r && r.ok && r.settings) ? r.settings : {});
     syncPanelFromSettings();
     return state.settings;
   }
 
   async function updateSettings(patch) {
-    state.settings = LF_MERGE(state.settings || LF_DEFAULTS, patch);
+    // 读-改-写：浮动面板只改自己关心的字段，不能把整份旧快照盖回去
+    // （设置页可能刚改过别的项；旧版这里会把它们一起冲掉）
+    const o = await chrome.storage.sync.get('settings');
+    state.settings = LF_MERGE(LF_MERGE(LF_DEFAULTS, (o && o.settings) || {}), patch);
     await chrome.storage.sync.set({ settings: state.settings });
   }
 
@@ -83,126 +81,23 @@
     if (state.on && (langChanged || modeChanged)) retranslate();
   });
 
-  /* ============================== DOM 扫描 ============================== */
-
-  function findBlockAncestor(el) {
-    let cur = el;
-    while (cur && cur !== document.body && cur !== document.documentElement) {
-      if (BLOCK_TAGS.has(cur.tagName) && !cur.querySelector(BLOCK_SELECTOR)) return cur;
-      cur = cur.parentElement;
-    }
-    return null;
-  }
-
-  function getUnits() {
-    const s = state.settings || {};
-    const minLen = Math.max(1, (s.advanced && s.advanced.minTextLength) != null ? s.advanced.minTextLength : 2);
-    const body = document.body;
-    if (!body) return [];
-
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const val = node.nodeValue;
-        if (!val || val.trim().length < minLen) return NodeFilter.FILTER_REJECT;
-        const el = node.parentElement;
-        if (!el) return NodeFilter.FILTER_REJECT;
-        if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
-        if (el.closest('[data-lf-skip],lf-translation,lf-original,lf-text,[data-lf-done],#lf-ui-host,#lf-video-host,.ytp-caption-window-container,.bpx-player-subtitle-wrap')) {
-          return NodeFilter.FILTER_REJECT;
-        }
-        if (el.isContentEditable) return NodeFilter.FILTER_REJECT;
-        if (el.closest('button,[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      }
-    });
-
-    const blocks = new Map(); // 保持文档顺序
-    let node;
-    while ((node = walker.nextNode())) {
-      const block = findBlockAncestor(node.parentElement);
-      if (block && !blocks.has(block)) blocks.set(block, true);
-    }
-
-    const out = [];
-    for (const b of blocks.keys()) {
-      try {
-        const st = getComputedStyle(b);
-        if (st.display === 'none' || st.visibility === 'hidden') continue;
-        if (!b.getClientRects().length) continue;
-        if (normText(b).length > 3000) continue; // 超长块跳过，防止请求过大
-        out.push(b);
-      } catch (e) { /* 节点可能已脱离文档 */ }
-    }
-    return out;
-  }
-
   /* ============================== 翻译应用 ============================== */
 
-  function makeTranslationEl(text, isError) {
-    const el = document.createElement('lf-translation');
-    el.setAttribute('data-lf-skip', '1');
-    el.className = 'lf-translation' + (isError ? ' lf-error' : '');
-    applyStyleTo(el);
-    el.textContent = text;
-    return el;
-  }
-
-  function applyStyleTo(el) {
-    const s = (state.settings && state.settings.style) || {};
-    if (s.color) el.style.color = s.color; else el.style.removeProperty('color');
-    el.style.fontSize = ((s.fontSize || 95) / 100) + 'em';
-    if (s.showBadge) el.setAttribute('data-badge', '1');
-    else el.removeAttribute('data-badge');
+  // 落地逻辑见 content/marks.js（LF_MARKS），这里只绑定当前设置
+  function applyTranslation(block, translated) {
+    return LF_MARKS.applyTranslation(block, translated, state.settings);
   }
 
   function reapplyStyles() {
-    document.querySelectorAll('lf-translation.lf-translation').forEach(applyStyleTo);
-  }
-
-  function applyTranslation(block, translated) {
-    const mode = (state.settings && state.settings.displayMode) || 'bilingual';
-    block.dataset.lfDone = '1';
-
-    if (translated == null) {
-      if (mode === 'bilingual' && !block.nextElementSibling?._lf) {
-        const err = makeTranslationEl('⚠ 此段翻译失败', true);
-        err._lf = true;
-        block.after(err);
-        requestAnimationFrame(() => err.classList.add('lf-in'));
-      }
-      return;
-    }
-
-    if (mode === 'bilingual') {
-      const next = block.nextElementSibling;
-      if (next && next.tagName === 'LF-TRANSLATION') return;
-      const el = makeTranslationEl(translated, false);
-      block.after(el);
-      requestAnimationFrame(() => el.classList.add('lf-in'));
-    } else if (mode === 'replace') {
-      if (!block.querySelector(':scope > lf-original')) {
-        const holder = document.createElement('lf-original');
-        holder.setAttribute('data-lf-skip', '1');
-        while (block.firstChild) holder.appendChild(block.firstChild);
-        block.appendChild(holder);
-      }
-      if (!block.querySelector(':scope > lf-text')) {
-        const t = document.createElement('lf-text');
-        t.setAttribute('data-lf-skip', '1');
-        t.textContent = translated;
-        block.appendChild(t);
-      }
-      block.classList.add('lf-replaced');
-    } else { // hover
-      block.dataset.lfHoverText = translated;
-      block.classList.add('lf-hoverable');
-    }
+    return LF_MARKS.reapplyStyles(document, state.settings);
   }
 
   function restore() {
     state.token++;
     state.on = false;
     state.translating = false;
+    dirty.clear();
+    clearTimeout(moTimer);
     document.querySelectorAll('lf-translation').forEach((el) => el.remove());
     document.querySelectorAll('[data-lf-done]').forEach((b) => {
       b.querySelectorAll(':scope > lf-original').forEach((h) => {
@@ -229,7 +124,13 @@
 
   /* ============================== 翻译主流程 ============================== */
 
-  async function translatePage(silent) {
+  /**
+   * 翻译主流程。
+   * @param {boolean} [silent] 增量补翻：不显示进度条、不弹「未发现文本」
+   * @param {?Element[]} [presetBlocks] 只翻这些块（增量路径直接给脏块，避免全页重扫）
+   */
+  async function translatePage(silent, presetBlocks) {
+    if (state.translating) return; // 正在翻译：新内容已进 dirty，等这轮结束再补
     const myToken = ++state.token;
     state.on = true;
     state.translating = true;
@@ -238,11 +139,21 @@
 
     await ensureSettings();
     const settings = state.settings;
-    const maxUnits = (settings.advanced && settings.advanced.maxUnits) || 600;
+    // 夹住范围：导入的脏值（0 / 负数）会让 slice(0, maxUnits) 行为异常（0 块 / 丢掉最后一块）
+    const rawUnits = Number((settings.advanced && settings.advanced.maxUnits) || 600);
+    const maxUnits = Number.isFinite(rawUnits) ? Math.max(50, Math.min(3000, Math.round(rawUnits))) : 600;
+    const minLen = Math.max(1, (settings.advanced && settings.advanced.minTextLength) != null
+      ? settings.advanced.minTextLength : 2);
 
-    const units = getUnits().filter((b) => !b.dataset.lfDone);
-    const limited = units.length > maxUnits;
-    const list = limited ? units.slice(0, maxUnits) : units;
+    let list;
+    let limited = false;
+    if (presetBlocks) {
+      list = presetBlocks.slice(0, maxUnits);
+    } else {
+      const scanned = LF_SCAN.getUnits({ minLen, limit: maxUnits + 1 }).filter((b) => !b.dataset.lfDone);
+      limited = scanned.length > maxUnits;
+      list = limited ? scanned.slice(0, maxUnits) : scanned;
+    }
 
     const seen = new Set();
     const uniqueTexts = [];
@@ -253,14 +164,14 @@
 
     if (!uniqueTexts.length) {
       state.translating = false;
-      hideProgress(0.3);
+      if (!silent) hideProgress(0.3);
       updateBallUI();
       updatePanelState();
       if (!silent) toast('未发现可翻译的文本');
       return;
     }
 
-    showProgress(0.04, '正在准备翻译…');
+    if (!silent) showProgress(0.04, '正在准备翻译…');
 
     const resultMap = new Map();
     let done = 0;
@@ -279,8 +190,10 @@
         lastError = (r && r.error) || '网络错误，无法连接翻译服务';
       }
       done += c.length;
-      showProgress(Math.min(0.97, 0.05 + 0.92 * (done / uniqueTexts.length)),
-        '翻译中 ' + done + ' / ' + uniqueTexts.length);
+      if (!silent) {
+        showProgress(Math.min(0.97, 0.05 + 0.92 * (done / uniqueTexts.length)),
+          '翻译中 ' + done + ' / ' + uniqueTexts.length);
+      }
     }
 
     for (const b of list) {
@@ -290,21 +203,21 @@
     }
 
     state.translating = false;
-    hideProgress(0.5);
+    if (!silent) hideProgress(0.5);
     updateBallUI();
     updatePanelState();
 
     if (!anyOk && lastError) {
       showPanelError(lastError);
-      toast('翻译失败：' + lastError);
+      if (!silent) toast('翻译失败：' + lastError);
     } else if (limited) {
       showPanelError('页面内容较多，已翻译前 ' + maxUnits + ' 个文本块');
     } else if (done > 0) {
       hidePanelError();
     }
 
-    // 翻译期间新增的内容稍后补翻（静默，无新内容时不打扰）
-    setTimeout(() => { if (state.on && !state.translating && state.token === myToken) translatePage(true); }, 1500);
+    // 翻译期间新增的内容已进 dirty 集合，这里补一轮（不再全页重扫）
+    if (dirty.size) scheduleDirty();
   }
 
   /* ============================== 悬停模式 / 划词翻译 ============================== */
@@ -341,223 +254,7 @@
 
   let ui = null; // {host, root, ball, panel, ...}
 
-  const SHADOW_CSS = `
-    :host { all: initial; font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: inherit; }
-
-    /* ---- 悬浮球 ---- */
-    #lf-ball {
-      position: fixed; width: 46px; height: 46px; border-radius: 50%;
-      background: linear-gradient(135deg, #5b8cff 0%, #a05cff 100%);
-      box-shadow: 0 6px 22px rgba(96, 112, 255, 0.45), inset 0 1px 0 rgba(255,255,255,0.25);
-      cursor: pointer; user-select: none; -webkit-user-select: none;
-      display: flex; align-items: center; justify-content: center;
-      z-index: 2147483600; transition: transform .18s ease, box-shadow .18s ease;
-      touch-action: none;
-    }
-    #lf-ball:hover { transform: scale(1.08); box-shadow: 0 8px 28px rgba(96,112,255,.6), inset 0 1px 0 rgba(255,255,255,.25); }
-    #lf-ball.dragging { transition: none; transform: scale(1.02); cursor: grabbing; }
-    #lf-ball svg { width: 24px; height: 24px; pointer-events: none; }
-    #lf-ball .dot {
-      position: absolute; right: 1px; top: 1px; width: 11px; height: 11px; border-radius: 50%;
-      border: 2px solid #fff; background: #c3c9d9; pointer-events: none;
-    }
-    #lf-ball.on .dot { background: #34d399; }
-    #lf-ball.working .dot { background: #fbbf24; animation: lf-pulse 1s ease infinite; }
-    #lf-ball.working { animation: lf-ring 1.6s ease infinite; }
-    @keyframes lf-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
-    @keyframes lf-ring {
-      0% { box-shadow: 0 0 0 0 rgba(96,112,255,.55), 0 6px 22px rgba(96,112,255,.45); }
-      70% { box-shadow: 0 0 0 14px rgba(96,112,255,0), 0 6px 22px rgba(96,112,255,.45); }
-      100% { box-shadow: 0 0 0 0 rgba(96,112,255,0), 0 6px 22px rgba(96,112,255,.45); }
-    }
-
-    /* ---- 面板 ---- */
-    #lf-panel {
-      position: fixed; width: 292px;
-      background: rgba(18, 21, 31, 0.96);
-      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255,255,255,0.09);
-      border-radius: 16px;
-      box-shadow: 0 18px 60px rgba(0,0,0,0.5);
-      color: #e8eaf2; font-size: 13px; line-height: 1.5;
-      z-index: 2147483601; overflow: hidden;
-      animation: lf-pop .22s cubic-bezier(.2,.9,.3,1.2) both;
-    }
-    @keyframes lf-pop { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
-    #lf-panel.hidden { display: none; }
-
-    .head {
-      display: flex; align-items: center; gap: 8px;
-      padding: 14px 14px 10px;
-    }
-    .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; letter-spacing: .02em; flex: 1; }
-    .brand .logo {
-      width: 26px; height: 26px; border-radius: 8px;
-      background: linear-gradient(135deg,#5b8cff,#a05cff);
-      color: #fff; display: flex; align-items: center; justify-content: center;
-      font-size: 13px; font-weight: 700;
-    }
-    .icon-btn {
-      width: 26px; height: 26px; border: none; border-radius: 7px; cursor: pointer;
-      background: rgba(255,255,255,0.06); color: #a8b0c4;
-      display: flex; align-items: center; justify-content: center; font-size: 14px;
-      transition: background .15s;
-    }
-    .icon-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
-
-    #lf-panel .body { padding: 2px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-
-    .field { display: flex; flex-direction: column; gap: 6px; }
-    .field > .lbl { font-size: 11px; color: #8a92a8; letter-spacing: .06em; }
-
-    select {
-      appearance: none; -webkit-appearance: none;
-      background: rgba(255,255,255,0.05) url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a8b0c4' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center;
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 9px;
-      color: #e8eaf2; padding: 8px 30px 8px 11px; font-size: 13px; cursor: pointer; outline: none;
-      width: 100%;
-    }
-    select:hover { border-color: rgba(255,255,255,0.2); }
-    select option { background: #161a26; color: #e8eaf2; }
-
-    .seg { display: flex; background: rgba(255,255,255,0.05); border-radius: 9px; padding: 3px; gap: 3px; }
-    .seg button {
-      flex: 1; border: none; background: transparent; color: #a8b0c4;
-      padding: 6px 0; border-radius: 7px; cursor: pointer; font-size: 12px;
-      transition: all .15s;
-    }
-    .seg button:hover { color: #e8eaf2; }
-    .seg button.active {
-      background: linear-gradient(135deg, rgba(91,140,255,.9), rgba(160,92,255,.9));
-      color: #fff; box-shadow: 0 2px 8px rgba(96,112,255,.35);
-    }
-
-    .actions { display: flex; gap: 8px; }
-    .btn {
-      border: none; border-radius: 10px; padding: 9px 12px; font-size: 13px; font-weight: 500;
-      cursor: pointer; transition: all .15s; flex: 1;
-    }
-    .btn.primary {
-      background: linear-gradient(135deg, #5b8cff, #a05cff); color: #fff;
-      box-shadow: 0 4px 14px rgba(96,112,255,.35);
-    }
-    .btn.primary:hover { filter: brightness(1.1); }
-    .btn.primary:disabled { opacity: .6; cursor: default; filter: none; }
-    .btn.ghost {
-      background: rgba(255,255,255,0.06); color: #c9cfdf; border: 1px solid rgba(255,255,255,0.08);
-    }
-    .btn.ghost:hover { background: rgba(255,255,255,0.12); }
-    .btn.ghost.active {
-      background: linear-gradient(135deg, rgba(91,140,255,.85), rgba(160,92,255,.85));
-      color: #fff; border-color: transparent;
-      box-shadow: 0 3px 10px rgba(96,112,255,.3);
-    }
-
-    .site-rule {
-      display: flex; align-items: center; gap: 8px; font-size: 12px; color: #a8b0c4;
-      background: rgba(255,255,255,0.03); border-radius: 9px; padding: 8px 10px; cursor: pointer;
-    }
-    .site-rule input { accent-color: #6c7cff; width: 14px; height: 14px; cursor: pointer; }
-
-    .foot {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 9px 14px; border-top: 1px solid rgba(255,255,255,0.06);
-      font-size: 11px; color: #6b7387;
-    }
-    .foot .engine { color: #8a92a8; }
-    .foot .engine b { color: #aab3ff; font-weight: 500; }
-
-    #lf-panel .msg {
-      margin: 0 14px 10px; padding: 8px 10px; border-radius: 9px; font-size: 12px;
-      background: rgba(248,113,113,0.1); color: #fca5a5; border: 1px solid rgba(248,113,113,0.2);
-      display: flex; gap: 6px; align-items: flex-start;
-    }
-    #lf-panel .msg.hidden { display: none; }
-
-    /* ---- 进度条 ---- */
-    #lf-progress {
-      position: fixed; left: 0; top: 0; right: 0; height: 3px; z-index: 2147483602;
-      background: rgba(99,102,241,0.15); transition: opacity .4s;
-    }
-    #lf-progress.hidden { opacity: 0; pointer-events: none; }
-    #lf-progress .bar {
-      height: 100%; width: 0;
-      background: linear-gradient(90deg, #5b8cff, #a05cff, #5b8cff);
-      background-size: 200% 100%;
-      animation: lf-flow 1.4s linear infinite;
-      border-radius: 0 2px 2px 0;
-      transition: width .3s ease;
-    }
-    @keyframes lf-flow { from { background-position: 0 0; } to { background-position: 200% 0; } }
-    #lf-progress .label {
-      position: absolute; top: 9px; left: 50%; transform: translateX(-50%);
-      background: rgba(18,21,31,0.92); border: 1px solid rgba(255,255,255,0.09);
-      color: #c9cfdf; font-size: 11px; padding: 4px 12px; border-radius: 99px;
-      backdrop-filter: blur(10px);
-    }
-
-    /* ---- Tooltip ---- */
-    #lf-tip {
-      position: fixed; max-width: 420px; z-index: 2147483603;
-      background: rgba(18,21,31,0.97); border: 1px solid rgba(255,255,255,0.1);
-      color: #e8eaf2; font-size: 13px; line-height: 1.6;
-      padding: 10px 13px; border-radius: 11px;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
-      backdrop-filter: blur(14px);
-      white-space: pre-wrap; word-break: break-word;
-    }
-    #lf-tip.hidden { display: none; }
-
-    /* ---- 划词浮条 ---- */
-    #lf-selbar {
-      position: fixed; z-index: 2147483605;
-      background: rgba(18,21,31,0.97);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 12px;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
-      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      padding: 6px;
-      display: flex; flex-direction: column; gap: 6px;
-      color: #e8eaf2; font-size: 13px;
-      animation: lf-pop .16s cubic-bezier(.2,.9,.3,1.2) both;
-    }
-    #lf-selbar.hidden { display: none; }
-    #lf-selbar .sb-row { display: flex; align-items: center; gap: 4px; }
-    #lf-selbar .sb-btn {
-      border: none; border-radius: 8px; cursor: pointer;
-      background: rgba(255,255,255,0.06); color: #d7dcec;
-      padding: 6px 12px; font-size: 13px; transition: background .15s;
-      display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
-    }
-    #lf-selbar .sb-btn:hover { background: rgba(255,255,255,0.13); color: #fff; }
-    #lf-selbar .sb-btn.primary { background: linear-gradient(135deg,#5b8cff,#a05cff); color: #fff; }
-    #lf-selbar .sb-btn.primary:hover { filter: brightness(1.1); }
-    #lf-selbar .sb-btn:disabled { opacity: .65; cursor: default; }
-    #lf-selbar .sb-divider { width: 1px; height: 18px; background: rgba(255,255,255,0.12); margin: 0 2px; }
-    #lf-selbar .sb-result {
-      max-width: 380px; max-height: 280px; overflow-y: auto;
-      white-space: pre-wrap; word-break: break-word; line-height: 1.55;
-      padding: 6px 8px; font-size: 13px; color: #e8eaf2;
-      border-top: 1px solid rgba(255,255,255,0.08);
-    }
-    #lf-selbar .sb-result.hidden { display: none; }
-    #lf-selbar .sb-result.err { color: #fca5a5; }
-
-    /* ---- Toast ---- */
-    #lf-toast {
-      position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%);
-      background: rgba(18,21,31,0.96); border: 1px solid rgba(255,255,255,0.1);
-      color: #e8eaf2; font-size: 13px; padding: 9px 18px; border-radius: 16px;
-      box-shadow: 0 10px 32px rgba(0,0,0,0.4); z-index: 2147483604;
-      backdrop-filter: blur(12px);
-      animation: lf-toast-in .25s ease both;
-      max-width: min(80vw, 460px); white-space: normal;
-      line-height: 1.5; text-align: center; word-break: break-word;
-    }
-    @keyframes lf-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
-    #lf-toast.hidden { display: none; }
-  `;
+  const SHADOW_CSS = LF_UI_CSS; // 样式见 content/ui-css.js
 
   function buildUI() {
     const host = document.createElement('div');
@@ -598,7 +295,7 @@
           <div class="actions">
             <button class="btn primary" id="lf-btn-go">翻译本页</button>
             <button class="btn ghost" id="lf-btn-restore">还原</button>
-            <button class="btn ghost" id="lf-btn-live" title="捕获本页声音，实时转写并翻译成滚动字幕（适合直播）">直播字幕</button>
+            <button class="btn ghost" id="lf-btn-live" title="直播字幕：需从工具栏图标 / 右键菜单 / Alt+Shift+L 启动捕获（浏览器安全限制）">直播字幕</button>
           </div>
           <label class="site-rule">
             <input type="checkbox" id="lf-chk-site">
@@ -661,12 +358,10 @@
   }
 
   function setBallPos(p) {
-    const size = 46;
-    const x = Math.max(6, Math.min(window.innerWidth - size - 6, p.x));
-    const y = Math.max(6, Math.min(window.innerHeight - size - 6, p.y));
-    state.ballPos = { x, y };
-    ui.ball.style.left = x + 'px';
-    ui.ball.style.top = y + 'px';
+    const pos = LF_VIEW.clampBall(p, { w: window.innerWidth, h: window.innerHeight }, 6);
+    state.ballPos = pos;
+    ui.ball.style.left = pos.x + 'px';
+    ui.ball.style.top = pos.y + 'px';
   }
 
   function bindBall() {
@@ -721,7 +416,15 @@
       ui.btnLive.textContent = '启动中…';
       const r = await send({ type: 'lf:startLive' });
       ui.btnLive.disabled = false;
-      if (!(r && r.ok)) {
+      if (r && r.ok) {
+        hidePanelError();
+      } else if (r && r.code === 'needInvocation') {
+        // 内容脚本里的点击不构成「唤起扩展」，tabCapture 会拒绝——给出可执行的替代入口，
+        // 而不是把浏览器的英文安全报错原样丢给用户
+        showPanelError('浏览器安全要求：需先唤起扩展才能捕获页面声音。请点工具栏的 BPFlow 图标 → 开始，或按 Alt+Shift+L / 右键菜单启动');
+        toast('请从工具栏图标 / 右键菜单 / Alt+Shift+L 启动直播字幕');
+      } else {
+        showPanelError((r && r.error) || '启动失败');
         toast('⚠ ' + ((r && r.error) || '启动失败'));
       }
       updateLiveBtn();
@@ -793,14 +496,13 @@
     ui.selResult.classList.remove('err');
     sb.classList.remove('hidden');
 
-    const w = sb.offsetWidth, h = sb.offsetHeight;
-    let x = rect.left + (rect.width || 0) / 2 - w / 2;
-    let y = rect.top - h - 8;
-    if (y < 8) y = rect.top + (rect.height || 0) + 8;
-    x = Math.max(8, Math.min(window.innerWidth - w - 8, x));
-    if (y < 8) y = 8;
-    sb.style.left = x + 'px';
-    sb.style.top = y + 'px';
+    const pos = LF_VIEW.selBarPosition(
+      rect,
+      { w: sb.offsetWidth, h: sb.offsetHeight },
+      { w: window.innerWidth, h: window.innerHeight }
+    );
+    sb.style.left = pos.x + 'px';
+    sb.style.top = pos.y + 'px';
   }
 
   function hideSelBar() {
@@ -872,33 +574,25 @@
   }
 
   function positionPanel() {
-    const p = state.ballPos || defaultBallPos();
-    const pw = 292, ph = ui.panel.offsetHeight || 380;
-    let x = p.x - pw + 46 + 8; // 默认在球左侧展开
-    if (x < 10) x = Math.min(p.x + 54, window.innerWidth - pw - 10);
-    let y = p.y;
-    if (y + ph > window.innerHeight - 10) y = window.innerHeight - ph - 10;
-    if (y < 10) y = 10;
-    ui.panel.style.left = x + 'px';
-    ui.panel.style.top = y + 'px';
+    const pos = LF_VIEW.panelPosition(
+      state.ballPos || defaultBallPos(),
+      { w: LF_VIEW.PANEL_WIDTH, h: ui.panel.offsetHeight || 380 },
+      { w: window.innerWidth, h: window.innerHeight }
+    );
+    ui.panel.style.left = pos.x + 'px';
+    ui.panel.style.top = pos.y + 'px';
   }
 
   function syncPanelFromSettings() {
     if (!ui || !state.settings) return;
     const s = state.settings;
 
-    // 语言下拉
-    const all = [].concat(LF.LANGS, s.customLangs || []);
-    const quick = (s.quickLangs || []).filter((c) => c !== 'auto' && all.some((l) => l.code === c));
-    if (!quick.includes(s.targetLang)) quick.unshift(s.targetLang);
-    const rest = all.filter((l) => l.code !== 'auto' && !quick.includes(l.code));
-    const opts = [];
-    quick.forEach((c) => { const l = all.find((x) => x.code === c); opts.push('<option value="' + esc(c) + '">' + esc(l ? l.name : c) + '</option>'); });
-    if (rest.length) {
-      opts.push('<option disabled value="__sep__">────────</option>');
-      rest.forEach((l) => opts.push('<option value="' + esc(l.code) + '">' + esc(l.name || l.label) + '</option>'));
-    }
-    ui.selTarget.innerHTML = opts.join('');
+    // 语言下拉（构建逻辑见 ui-view.js）
+    ui.selTarget.innerHTML = LF_VIEW.targetOptions(
+      [].concat(LF.LANGS, s.customLangs || []),
+      s.quickLangs || [],
+      s.targetLang
+    );
     ui.selTarget.value = s.targetLang || 'zh-CN';
 
     // 模式分段
@@ -912,7 +606,7 @@
 
     // 引擎名
     const prov = (s.providers || []).find((p) => p.id === s.activeProviderId);
-    ui.engineName.innerHTML = '引擎：<b>' + esc(prov ? prov.name : '未配置') + '</b>';
+    ui.engineName.innerHTML = '引擎：<b>' + LF_VIEW.esc(prov ? prov.name : '未配置') + '</b>';
 
     updatePanelState();
   }
@@ -974,13 +668,13 @@
     ui.tip.textContent = text;
     ui.tip.classList.remove('hidden');
     const r = rect0 || { left: window.innerWidth / 2, top: 100, width: 0, height: 0 };
-    const tw = ui.tip.offsetWidth, th = ui.tip.offsetHeight;
-    let x = r.left + (r.width || 0) / 2 - tw / 2;
-    let y = r.top - th - 10;
-    if (y < 8) y = r.top + (r.height || 0) + 10;
-    x = Math.max(8, Math.min(window.innerWidth - tw - 8, x));
-    ui.tip.style.left = x + 'px';
-    ui.tip.style.top = y + 'px';
+    const pos = LF_VIEW.tipPosition(
+      r,
+      { w: ui.tip.offsetWidth, h: ui.tip.offsetHeight },
+      { w: window.innerWidth, h: window.innerHeight }
+    );
+    ui.tip.style.left = pos.x + 'px';
+    ui.tip.style.top = pos.y + 'px';
     clearTimeout(tipTimer);
     if (timeout) tipTimer = setTimeout(hideTooltip, timeout);
   }
@@ -996,12 +690,6 @@
     ui.toastEl.classList.remove('hidden');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => ui.toastEl.classList.add('hidden'), 3500);
-  }
-
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
   }
 
   /* ============================== 消息 ============================== */
@@ -1046,35 +734,84 @@
   });
 
   /* ============================== 增量翻译 ============================== */
+  /*
+   * 只翻「变动过的块」：MutationObserver 把新增子树 / 文本变化折算成 dirty 块集合，
+   * 去抖后只对这批块发请求。旧实现每次都全页重扫（TreeWalker + getComputedStyle +
+   * getClientRects），SPA 高频更新时主线程会被反复吃满。
+   */
 
   let moTimer = null;
+
+  function addDirty(block) {
+    if (!block || dirty.size >= 500) return; // 上限：极端 SPA 不至于把内存拖爆
+    if (!LF_SCAN.isTranslatableBlock(block)) return; // 与整页扫描同一套跳过规则
+    dirty.add(block);
+  }
+
+  /** 把一批 mutation 折算成脏块（只登记，不翻译） */
+  function collectDirty(muts) {
+    for (const m of muts) {
+      if (m.type === 'characterData') {
+        const p = m.target && m.target.parentElement;
+        if (!p || !p.closest) continue;
+        if (LF_SCAN.isSkipped(p)) continue;
+        addDirty(LF_SCAN.findBlockAncestor(p));
+        continue;
+      }
+      for (const n of m.addedNodes) {
+        if (n.nodeType === 1) {
+          if (n.id === 'lf-ui-host' || n.id === 'lf-video-host' || n.tagName === 'LF-TRANSLATION') continue;
+          if (n.hasAttribute && n.hasAttribute('data-lf-skip')) continue;
+          if (n.closest && n.closest('#lf-ui-host,[data-lf-skip]')) continue;
+          LF_SCAN.collectLeafBlocks(n, dirty, 500);
+        } else if (n.nodeType === 3 && n.nodeValue && n.nodeValue.trim()) {
+          addDirty(LF_SCAN.findBlockAncestor(n.parentElement));
+        }
+      }
+    }
+  }
+
+  function scheduleDirty() {
+    if (!state.on) return;
+    clearTimeout(moTimer);
+    moTimer = setTimeout(() => { moTimer = null; translateDirty(); }, 800);
+  }
+
+  /** 补翻脏块：单批最多 60 块，剩下的一轮再补 */
+  async function translateDirty() {
+    if (!state.on || state.translating || !dirty.size) return;
+    const s = state.settings || {};
+    const minLen = Math.max(1, (s.advanced && s.advanced.minTextLength) != null ? s.advanced.minTextLength : 2);
+    const list = [];
+    for (const b of dirty) {
+      dirty.delete(b);
+      if (!b.isConnected || b.dataset.lfDone) continue;
+      if (!LF_SCAN.isTranslatableBlock(b)) continue; // 二次校验：脏集合可能被旧规则塞入过
+      const t = normText(b);
+      if (!t || t.length < minLen) continue;
+      try {
+        const st = getComputedStyle(b);
+        if (st.display === 'none' || st.visibility === 'hidden') continue;
+        if (!b.getClientRects().length) continue;
+      } catch (e) { continue; }
+      list.push(b);
+      if (list.length >= 60) break;
+    }
+    if (!list.length) {
+      if (dirty.size) scheduleDirty();
+      return;
+    }
+    await translatePage(true, list);
+    if (dirty.size) scheduleDirty();
+  }
+
   function observeMutations() {
     const mo = new MutationObserver((muts) => {
-      if (!state.on || state.translating) return;
-      let relevant = false;
-      for (const m of muts) {
-        if (m.type === 'characterData') {
-          const p = m.target && m.target.parentElement;
-          if (p && p.closest && p.closest('[data-lf-skip],[data-lf-done],lf-translation,lf-original,lf-text,#lf-ui-host,#lf-video-host,.ytp-caption-window-container,.bpx-player-subtitle-wrap')) continue;
-          relevant = true; break;
-        }
-        for (const n of m.addedNodes) {
-          if (n.nodeType === 1) {
-            if (n.id === 'lf-ui-host' || n.id === 'lf-video-host' || n.tagName === 'LF-TRANSLATION') continue;
-            if (n.hasAttribute && n.hasAttribute('data-lf-skip')) continue;
-            if (n.closest && n.closest('#lf-ui-host,[data-lf-skip]')) continue;
-            if (n.textContent && n.textContent.trim()) { relevant = true; break; }
-          } else if (n.nodeType === 3 && n.nodeValue && n.nodeValue.trim()) {
-            relevant = true; break;
-          }
-        }
-        if (relevant) break;
-      }
-      if (!relevant) return;
-      clearTimeout(moTimer);
-      moTimer = setTimeout(() => {
-        if (state.on && !state.translating) translatePage(true);
-      }, 1000);
+      if (!state.on) return;
+      const before = dirty.size;
+      collectDirty(muts);
+      // 翻译中也不丢：新块先入 dirty，本轮结束后统一补
+      if (dirty.size !== before) scheduleDirty();
     });
     mo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   }

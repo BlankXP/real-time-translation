@@ -36,7 +36,7 @@
 
 - **悬浮球** — 页面右下角可拖拽悬浮球，点击展开快捷面板（改语言、切模式、开关翻译、开直播字幕）
 
-- 深色高端 UI、Shadow DOM 样式隔离、打印时自动隐藏译文
+- 类纸风格 UI（米色纸面 + 墨色文字 + 朱砂强调）、Shadow DOM 样式隔离、打印时自动隐藏译文
 
 ## 安装（开发者模式加载）
 
@@ -149,33 +149,64 @@
 real-time-translation/
 ├── manifest.json           # MV3 清单
 ├── background/
-│   └── background.js       # Service Worker：引擎适配、批量调度、并发、LRU 缓存、快捷键、右键菜单、直播调度
+│   ├── background.js       # Service Worker：批量调度、并发、LRU 缓存、直播会话、快捷键、右键菜单
+│   └── engines.js          # 引擎适配层：Bing / Google / MyMemory / DeepL / OpenAI 兼容（含错误文案）
 ├── content/
-│   ├── content.js          # 内容脚本：DOM 扫描、翻译应用、悬浮球（Shadow DOM）、增量翻译、划词浮条
-│   ├── video.js            # 内容脚本：视频字幕翻译覆盖层、直播滚动字幕
-│   └── content.css         # 译文展示样式（lf-* 前缀隔离）
+│   ├── content.js          # 主流程：翻译调度与取消、悬浮球/面板逻辑、增量翻译、划词浮条、站点规则
+│   ├── scan.js             # DOM 文本块扫描：叶子块识别、可见性过滤、脏块收集
+│   ├── marks.js            # 译文落地：双语 / 替换 / 悬停三种模式的 DOM 操作与样式
+│   ├── ui-css.js           # Shadow DOM 全部样式（悬浮球 / 面板 / 进度条 / Tooltip / Toast）
+│   ├── ui-view.js          # 界面计算：球/面板/提示/浮条定位、语言下拉构建（纯函数）
+│   ├── video.js            # 视频字幕翻译覆盖层、直播滚动字幕
+│   └── content.css         # 页面内译文展示样式（lf-* 前缀隔离）
 ├── offscreen/              # offscreen 文档：tabCapture 音频捕获、滚动分片录音、ASR 转写
 ├── popup/                  # 工具栏弹窗：开关 / 语言 / 模式 / 引擎
 ├── options/                # 设置页：引擎管理 / 语言管理 / 显示效果 / 视频直播 / 高级设置
 ├── shared/
 │   ├── langs.js            # 语言表与编码映射（Bing / DeepL / Google）
-│   ├── defaults.js         # 默认设置与 AI 平台 / 语音转写预设
+│   ├── defaults.js         # 默认设置、迁移、设置校验、密钥拆分、接口地址策略
+│   ├── translate-core.js   # 纯函数：缓存键指纹、分片切分、译文拼接（SW 与测试共用）
 │   └── preview-shim.js     # 浏览器直接打开 UI 时的预览垫片
 ├── icons/                  # 16 / 48 / 128 图标
 ├── scripts/
-│   └── make_icons.py       # 图标生成脚本（Pillow）
+│   ├── make_icons.py       # 图标生成脚本（Pillow）
+│   └── syntax-check.js     # 零依赖语法自检（node --check 全量脚本 + JSON 校验）
+├── tests/                  # node:test 纯逻辑回归（设置校验 / 密钥分层 / 切分 / 缓存键 / 分片排序）
+├── eslint.config.js        # 只查真错误（no-undef / 重复声明 / 不可达代码…），不纠风格
+├── package.json            # npm scripts + 开发期依赖（eslint），扩展运行时不依赖
 └── demo/index.html         # 多语言测试页
 ```
 
 ## 架构说明
 
+- **模块边界**：`background.js` 只负责调度与状态；引擎请求集中在 `background/engines.js`；纯计算（缓存键指纹 / 分片切分 / 译文拼接）在 `shared/translate-core.js`；DOM 扫描规则在 `content/scan.js`，译文落地（三种模式）在 `content/marks.js`，界面样式在 `content/ui-css.js`，定位与下拉构建在 `content/ui-view.js`。纯函数模块同时被 Service Worker 与 node 测试加载，避免「测的是副本」
+
 - **消息流**：内容脚本收集文本块并去重 → 分批（16 条/批）发往 Service Worker → 按引擎特性再分片（Bing 20 条/请求、AI 模型 16 条 JSON 数组往返、Google/MyMemory 逐条）→ 并发池执行 → 结果按序回填
 
-- **缓存**：`引擎+模型+方向+文本` 哈希为键，内存 LRU + `chrome.storage.local` 持久化，上限可配置
+- **缓存**：`引擎+模型+方向+文本+配置指纹`（Base URL / 提示词 / 账号类型 / 温度）哈希为键，内存 LRU + `chrome.storage.local` 持久化，上限可配置；「测试连接」强制绕缓存
+
+- **设置分层**：公开设置存 `chrome.storage.sync`（随账号同步）；API Key 单独存 `chrome.storage.local`，内容脚本与弹窗通过 `lf:getSettings` 只取公开设置，读不到密钥
+
+- **直播分片**：每 5 秒一片，并行上限 2、排队上限 4（超出丢最旧），结果按分片序号有序交付；后台按标签页串行翻译，保证同一场直播的字幕顺序
 
 - **无污染还原**：替换模式将原文收纳进隐藏的 `<lf-original>` 容器而非销毁，还原时原样迁回，页面事件监听不丢失
 
 - **样式隔离**：所有注入 UI（悬浮球 / 面板 / 进度条 / Tooltip）位于 Shadow DOM 内，页面 CSS 互不影响
+
+## 开发与自测
+
+项目没有构建步骤，改完直接「加载已解压的扩展程序」即可。提交前跑一次：
+
+```bash
+npm install        # 仅首次：装 eslint（开发期依赖，不进入扩展包）
+npm run verify     # = npm run check && npm run lint && npm test
+```
+
+- `npm run check` —— 逐个 `node --check` 全部脚本并校验 JSON，挡住低级语法错误
+- `npm run lint` —— ESLint flat config，只查真会出问题的那类：未定义变量、重复声明、不可达代码、`catch` 里误吞逻辑等（不做风格检查）
+- `npm test` —— `node:test` 回归：设置校验（clamp / providers 清洗）、密钥拆分与回填、接口地址策略、语种探测、长文本切分与拼接、缓存键指纹、引擎分发与错误文案、直播分片有序交付、译文落地的三种模式（用最小 DOM 桩）
+
+测试与自检只用 node 内置能力；`eslint` 是唯一的开发期依赖，打包扩展时不需要 `node_modules`、`package.json`、`tests/`。
 
 ## 已知限制
 
@@ -197,4 +228,8 @@ real-time-translation/
 
 ***
 
-by blank\_xp · Manifest V3 · Chrome 110+
+by blank\_xp · Manifest V3 · Chrome 116+
+
+## License
+
+[MIT](LICENSE) © 2026 BlankXP

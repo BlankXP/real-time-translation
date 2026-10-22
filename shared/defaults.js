@@ -236,6 +236,300 @@
     return out;
   }
 
+  /* ==================== 设置校验（导入 / 脏数据收敛） ==================== */
+
+  const PROVIDER_TYPES = ['bing-free', 'google-free', 'mymemory', 'deepl', 'openai'];
+
+  /** 数值字段范围：[最小, 最大]。越界 clamp，非数字回落默认值 */
+  const NUM_LIMITS = {
+    'advanced.concurrency': [1, 8],
+    'advanced.minTextLength': [1, 40],
+    'advanced.maxCache': [50, 5000],
+    'advanced.maxUnits': [50, 3000],
+    'voice.playbackDelayMs': [0, 30000],
+    'voice.videoDelayTrimMs': [-3000, 3000],
+    'style.fontSize': [60, 200]
+  };
+
+  function pickPath(obj, path) {
+    return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  }
+
+  function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
+
+  /**
+   * 校验并规范化一份设置（「导入设置」等外部来源统一走这里）。
+   * 逐项收敛：数值 clamp / 枚举回退 / 数组长度与元素过滤 / providers 类型白名单。
+   *
+   * 为什么必须夹住数值：background 的缓存淘汰是 `while (_cache.size > maxCache)`，
+   * maxCache 为 0 或负数时在空缓存上恒真（delete(undefined) 不改变 size）→ service worker
+   * 直接死循环卡死，之后所有翻译请求都没有响应。脏值必须在入库前就被夹到安全区间。
+   * @returns {{settings: object, fixes: string[]}} fixes 为被修正项的可读描述
+   */
+  function lfValidateSettings(input) {
+    const fixes = [];
+    const src = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};
+    const S = deepMerge(deepClone(DEFAULTS), src);
+
+    // voice 先做旧结构迁移，后续数值 clamp 才对得上字段位置
+    if (S.voice && typeof S.voice === 'object') S.voice = lfMigrateVoice(S.voice) || deepClone(DEFAULTS.voice);
+
+    // ---- 数值：clamp ----
+    Object.keys(NUM_LIMITS).forEach((path) => {
+      const lo = NUM_LIMITS[path][0];
+      const hi = NUM_LIMITS[path][1];
+      const raw = pickPath(S, path);
+      const n = typeof raw === 'number' ? raw : parseFloat(raw);
+      const v = Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : pickPath(DEFAULTS, path);
+      if (v === raw) return;
+      const parts = path.split('.');
+      let obj = S;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!obj[parts[i]] || typeof obj[parts[i]] !== 'object') {
+          obj[parts[i]] = deepClone(pickPath(DEFAULTS, parts.slice(0, i + 1).join('.')) || {});
+        }
+        obj = obj[parts[i]];
+      }
+      obj[parts[parts.length - 1]] = v;
+      fixes.push(path + '：' + JSON.stringify(raw) + ' → ' + v);
+    });
+
+    // ---- providers：类型白名单 / id 去重 / 字段规范化 ----
+    const seenIds = {};
+    const provs = [];
+    (Array.isArray(S.providers) ? S.providers : []).slice(0, 20).forEach((p, i) => {
+      if (!p || typeof p !== 'object' || Array.isArray(p)) {
+        fixes.push('providers[' + i + ']：不是对象，已丢弃');
+        return;
+      }
+      if (PROVIDER_TYPES.indexOf(p.type) === -1) {
+        fixes.push('providers[' + i + ']：未知引擎类型 ' + JSON.stringify(p.type) + '，已丢弃');
+        return;
+      }
+      let id = typeof p.id === 'string' && p.id.trim() ? p.id.trim().slice(0, 64) : p.type + '-' + i;
+      if (seenIds[id]) {
+        id = id + '-' + i;
+        fixes.push('providers[' + i + ']：id 重复，已改为 ' + id);
+      }
+      seenIds[id] = 1;
+      const q = {
+        id,
+        type: p.type,
+        name: String(p.name == null ? '' : p.name).slice(0, 60) || p.type,
+        enabled: p.enabled !== false
+      };
+      if (p.baseUrl != null) q.baseUrl = String(p.baseUrl).slice(0, 300);
+      if (p.model != null) q.model = String(p.model).slice(0, 120);
+      if (p.apiKey != null) q.apiKey = String(p.apiKey).slice(0, 500);
+      if (p.plan != null) q.plan = p.plan === 'pro' ? 'pro' : 'free';
+      if (p.promptTemplate != null) q.promptTemplate = String(p.promptTemplate).slice(0, 2000);
+      if (p.temperature != null) {
+        const t = parseFloat(p.temperature);
+        q.temperature = Number.isFinite(t) ? Math.min(2, Math.max(0, t)) : 0.1;
+      }
+      if (p.builtin) q.builtin = true;
+      provs.push(q);
+    });
+    if (!provs.length) {
+      provs.push.apply(provs, deepClone(DEFAULTS.providers));
+      fixes.push('providers：为空或全部无效，已恢复默认引擎列表');
+    }
+    S.providers = provs;
+
+    if (!provs.some((p) => p.id === S.activeProviderId)) {
+      const first = provs.filter((p) => p.enabled !== false)[0] || provs[0];
+      fixes.push('activeProviderId：' + JSON.stringify(S.activeProviderId) + ' → ' + first.id);
+      S.activeProviderId = first.id;
+    }
+
+    // ---- 枚举 / 语言 ----
+    if (['bilingual', 'replace', 'hover'].indexOf(S.displayMode) === -1) {
+      fixes.push('displayMode：' + JSON.stringify(S.displayMode) + ' → bilingual');
+      S.displayMode = 'bilingual';
+    }
+
+    S.customLangs = (Array.isArray(S.customLangs) ? S.customLangs : []).slice(0, 50).filter((l) => (
+      l && typeof l === 'object'
+      && typeof l.code === 'string' && /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i.test(l.code)
+      && !(g.LF && g.LF.BY_CODE && g.LF.BY_CODE[l.code])
+    )).map((l) => ({
+      code: String(l.code).toLowerCase().slice(0, 12),
+      label: String(l.label || l.code).slice(0, 40),
+      name: String(l.name || l.code).slice(0, 40)
+    }));
+
+    const knownLang = (code) => {
+      if (typeof code !== 'string') return false;
+      if (code === 'auto') return true;
+      if (g.LF && g.LF.BY_CODE && g.LF.BY_CODE[code]) return true;
+      return S.customLangs.some((l) => l.code === code);
+    };
+    if (S.targetLang === 'auto' || !knownLang(S.targetLang)) {
+      fixes.push('targetLang：' + JSON.stringify(S.targetLang) + ' → ' + DEFAULTS.targetLang);
+      S.targetLang = DEFAULTS.targetLang;
+    }
+    if (!knownLang(S.sourceLang)) {
+      fixes.push('sourceLang：' + JSON.stringify(S.sourceLang) + ' → auto');
+      S.sourceLang = 'auto';
+    }
+
+    S.quickLangs = (Array.isArray(S.quickLangs) ? S.quickLangs : [])
+      .filter((c, i, arr) => typeof c === 'string' && c !== 'auto' && arr.indexOf(c) === i)
+      .slice(0, 20);
+    if (!S.quickLangs.length) S.quickLangs = deepClone(DEFAULTS.quickLangs);
+
+    // ---- 站点规则 / 黑名单 ----
+    S.blacklist = (Array.isArray(S.blacklist) ? S.blacklist : [])
+      .filter((h) => typeof h === 'string' && h && h.length < 255)
+      .slice(0, 500);
+
+    const rules = {};
+    const rawRules = (S.siteRules && typeof S.siteRules === 'object') ? S.siteRules : {};
+    Object.keys(rawRules).slice(0, 500).forEach((h) => {
+      const r = rawRules[h];
+      if (typeof h === 'string' && h && r && typeof r === 'object') rules[h.slice(0, 255)] = { auto: !!r.auto };
+    });
+    S.siteRules = rules;
+
+    // ---- 展示样式 / 视频字幕 ----
+    if (!S.style || typeof S.style !== 'object') S.style = deepClone(DEFAULTS.style);
+    if (typeof S.style.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(S.style.color)) S.style.color = '';
+    S.style.showBadge = S.style.showBadge !== false;
+
+    S.videoSubtitle = {
+      enabled: !(S.videoSubtitle && S.videoSubtitle.enabled === false),
+      bilingual: !(S.videoSubtitle && S.videoSubtitle.bilingual === false)
+    };
+
+    S.autoTranslate = !!S.autoTranslate;
+    S.selectionToolbar = S.selectionToolbar !== false;
+
+    return { settings: S, fixes };
+  }
+
+  /* ==================== 密钥与「公开设置」拆分 ==================== */
+  /*
+   * 为什么要拆：chrome.storage.sync 会随用户登录的 Chrome 账号同步到其它设备，
+   * 与设置页「不会上传到任何服务器」的表述冲突；而内容脚本只需要语言、样式、
+   * 引擎名这类公开字段，完全没必要读到 API Key。
+   * 约定：settings（sync）只放公开设置；lf:secrets（local）只放密钥。
+   */
+
+  /**
+   * 拆出密钥，返回不含 apiKey 的公开设置副本。
+   * @returns {{pub: object, secrets: {providers: object, voice: object}, hadKeys: boolean}}
+   */
+  function lfSplitSecrets(settings) {
+    const pub = deepClone(settings || {});
+    const secrets = { providers: {}, voice: {} };
+    let hadKeys = false;
+    if (Array.isArray(pub.providers)) {
+      pub.providers.forEach((p) => {
+        if (!p || typeof p !== 'object') return;
+        if (typeof p.apiKey === 'string' && p.apiKey) {
+          secrets.providers[p.id] = p.apiKey;
+          hadKeys = true;
+        }
+        delete p.apiKey;
+      });
+    }
+    const v = pub.voice;
+    if (v && typeof v === 'object') {
+      if (v.bailian && typeof v.bailian === 'object') {
+        if (v.bailian.apiKey) { secrets.voice.bailian = v.bailian.apiKey; hadKeys = true; }
+        delete v.bailian.apiKey;
+      }
+      if (v.openai && typeof v.openai === 'object') {
+        if (v.openai.apiKey) { secrets.voice.openai = v.openai.apiKey; hadKeys = true; }
+        delete v.openai.apiKey;
+      }
+    }
+    return { pub, secrets, hadKeys };
+  }
+
+  /** 把密钥合并回设置（返回新对象，不修改入参） */
+  function lfApplySecrets(settings, secrets) {
+    const out = deepClone(settings || {});
+    const s = secrets || {};
+    const sp = s.providers || {};
+    if (Array.isArray(out.providers)) {
+      out.providers.forEach((p) => {
+        if (p && p.id && typeof sp[p.id] === 'string' && sp[p.id]) p.apiKey = sp[p.id];
+      });
+    }
+    if (out.voice && typeof out.voice === 'object') {
+      const sv = s.voice || {};
+      if (out.voice.bailian && typeof out.voice.bailian === 'object' && sv.bailian) out.voice.bailian.apiKey = sv.bailian;
+      if (out.voice.openai && typeof out.voice.openai === 'object' && sv.openai) out.voice.openai.apiKey = sv.openai;
+    }
+    return out;
+  }
+
+  /** 合并两组密钥（over 覆盖 base，空值不覆盖） */
+  function lfMergeSecrets(base, over) {
+    const a = base || {};
+    const b = over || {};
+    const pick = (x, y) => {
+      const out = {};
+      Object.keys(x || {}).forEach((k) => { if (x[k]) out[k] = x[k]; });
+      Object.keys(y || {}).forEach((k) => { if (y[k]) out[k] = y[k]; });
+      return out;
+    };
+    return {
+      providers: pick(a.providers, b.providers),
+      voice: pick(a.voice, b.voice)
+    };
+  }
+
+  /* ==================== 接口地址校验 ==================== */
+
+  /**
+   * 校验自定义接口地址。远程地址必须 https，http 只允许本机 / 局域网调试地址——
+   * 否则 Bearer Key、页面正文与录音数据会在明文链路上外发。
+   * @returns {{ok: boolean, url?: string, local?: boolean, error?: string}}
+   */
+  /**
+   * 严格解析 IPv4 并判断是否属于私有/回环/链路本地网段。
+   * 不能用 /^10\./ 这类前缀匹配：`10.attacker.example` 是普通域名，
+   * 放行它等于允许把 API Key 明文发到公网主机。
+   */
+  function lfIsPrivateIPv4(host) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    if (!m) return false;
+    const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+    if (o.some((n) => n > 255)) return false;
+    if (o[0] === 10 || o[0] === 127) return true;              // 10/8、回环
+    if (o[0] === 192 && o[1] === 168) return true;             // 192.168/16
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;  // 172.16/12
+    if (o[0] === 169 && o[1] === 254) return true;             // 169.254/16 链路本地
+    return false;
+  }
+
+  /** IPv6 只认回环、ULA(fc00::/7)、链路本地(fe80::/10) */
+  function lfIsPrivateIPv6(host) {
+    const h = host.replace(/^\[|\]$/g, '');
+    if (h === '::1') return true;
+    if (/^f[cd][0-9a-f]{2}:/.test(h)) return true;
+    if (/^fe[89ab][0-9a-f]:/.test(h)) return true;
+    return false;
+  }
+
+  function lfValidateEndpoint(raw) {
+    const trimmed = String(raw || '').trim().replace(/\/+$/, '');
+    if (!trimmed) return { ok: false, error: '请填写接口地址' };
+    let u;
+    try { u = new URL(trimmed); } catch (e) { return { ok: false, error: '接口地址格式不正确，需以 http(s):// 开头' }; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, error: '接口地址只支持 http / https' };
+    const host = u.hostname.toLowerCase();
+    const local = host === 'localhost' || /\.localhost$/.test(host)  // RFC 6761：始终指向本机
+      || lfIsPrivateIPv4(host) || lfIsPrivateIPv6(host)
+      || /\.local$/.test(host);                                     // mDNS：只在本局域网内解析
+    if (u.protocol === 'http:' && !local) {
+      return { ok: false, local, error: '远程地址必须使用 https（http 仅允许 localhost / 内网 IP 等局域网地址）' };
+    }
+    return { ok: true, url: trimmed, local };
+  }
+
   g.LF_DEFAULTS = DEFAULTS;
   g.LF_PRESETS = PRESETS;
   g.LF_VOICE_PRESETS = VOICE_PRESETS;
@@ -246,4 +540,9 @@
   g.LF_MIGRATE_SETTINGS = lfMigrateSettings;
   g.LF_RESOLVE_VOICE = lfResolveVoice;
   g.LF_MERGE = deepMerge;
+  g.LF_VALIDATE_SETTINGS = lfValidateSettings;
+  g.LF_SPLIT_SECRETS = lfSplitSecrets;
+  g.LF_APPLY_SECRETS = lfApplySecrets;
+  g.LF_MERGE_SECRETS = lfMergeSecrets;
+  g.LF_VALIDATE_ENDPOINT = lfValidateEndpoint;
 })(globalThis);

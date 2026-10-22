@@ -5,6 +5,7 @@
  *      译文叠加为播放器内双语字幕层（复用 background 翻译引擎与缓存）
  *   2. 直播滚动字幕：接收 background 推送的语音转写 + 翻译结果（lf:live* 消息），
  *      渲染滚动字幕条与「直播翻译中」徽标
+ * 覆盖层为类纸风格：浅纸底 + 墨字，视频画面上像贴了一张字幕纸条。
  */
 /* global LF_DEFAULTS, LF_MERGE */
 (() => {
@@ -58,8 +59,9 @@
   }
 
   async function loadSettings() {
-    const o = await chrome.storage.sync.get('settings');
-    state.settings = LF_MERGE(LF_DEFAULTS, (o && o.settings) || {});
+    // 只取公开设置（不含 apiKey）
+    const r = await send({ type: 'lf:getSettings' });
+    state.settings = LF_MERGE(LF_DEFAULTS, (r && r.ok && r.settings) ? r.settings : {});
     return state.settings;
   }
 
@@ -120,6 +122,15 @@
 
   const transCache = new Map(); // 原文 -> 译文（会话级小缓存；跨请求缓存由 background 负责）
 
+  /**
+   * 字幕请求调度状态。
+   * 背景：YouTube / Bilibili 的 CC 是「逐词追加」的，原来每变一次就发一次翻译请求，
+   * 一句话能产生 10+ 次付费调用。策略改为：
+   *   新的一句 → 60ms 后立刻翻译首段（保证字幕不滞后一整句）
+   *   同句增长 → 等文本稳定 500ms 再刷新一次（通常整句只刷新 1~2 次）
+   */
+  const sub = { timer: null, seq: 0, cueText: '', translatedFor: '' };
+
   async function translateLine(text) {
     if (transCache.has(text)) return transCache.get(text);
     const r = await send({ type: 'lf:translate', texts: [text] });
@@ -131,6 +142,23 @@
     return null;
   }
 
+  function requestLine(t) {
+    if (state.lastOrig !== t) return;      // 已被更新的字幕顶替
+    if (sub.translatedFor === t) {
+      // 同一句再次出现（A→B→A）：别再发请求，但必须把缓存译文补上，否则停在「…」
+      const hit = transCache.get(t);
+      if (hit != null) renderCurrent(t, hit);
+      return;
+    }
+    const mySeq = ++sub.seq;
+    translateLine(t).then((tr) => {
+      if (mySeq !== sub.seq || state.lastOrig !== t) return;
+      if (tr == null) { renderCurrent(t, '⚠ 翻译失败', true); return; }
+      sub.translatedFor = t;
+      renderCurrent(t, tr);
+    });
+  }
+
   function handleSubtitleText(text) {
     const t = String(text || '').replace(/\s+/g, ' ').trim();
     if (!t || t === state.lastOrig) return;
@@ -139,11 +167,10 @@
     hideNativeCaptions();
     renderCurrent(t, null);
 
-    translateLine(t).then((tr) => {
-      if (state.lastOrig !== t) return; // 该行已被更新的字幕顶替
-      if (tr == null) renderCurrent(t, '⚠ 翻译失败', true);
-      else renderCurrent(t, tr);
-    });
+    const sameCue = !!(sub.cueText && t.indexOf(sub.cueText) === 0);
+    sub.cueText = t;
+    clearTimeout(sub.timer);
+    sub.timer = setTimeout(() => requestLine(t), sameCue ? 500 : 60);
   }
 
   function clearCurrentSoon() {
@@ -151,6 +178,8 @@
     state.clearTimer = setTimeout(() => {
       if (state.ui) state.ui.line.classList.add('hidden');
       state.lastOrig = '';
+      sub.cueText = '';        // 下一句按「新的一句」立即翻译
+      sub.translatedFor = '';  // 必须一起清：否则同一句再次出现会命中旧去重，永远停在「…」
     }, 400);
   }
 
@@ -226,7 +255,17 @@
   /* ============================== 覆盖层 UI（Shadow DOM） ============================== */
 
   const OVERLAY_CSS = `
-    :host { all: initial; font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    :host {
+      all: initial;
+      --lf-paper: rgba(250, 245, 234, 0.94);
+      --lf-ink: #241f1a;
+      --lf-ink-2: #5a5145;
+      --lf-ink-3: #8a8071;
+      --lf-line: rgba(72, 58, 40, 0.22);
+      --lf-seal: #b23a2f;
+      --lf-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", STSong, SimSun, Georgia, serif;
+      font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: inherit; }
 
     .wrap {
@@ -236,28 +275,30 @@
       pointer-events: none;
     }
 
-    /* ---- 视频字幕（当前行） ---- */
+    /* ---- 视频字幕（当前行）：一张纸片 ---- */
     .line {
       max-width: 86%;
-      background: rgba(8, 10, 16, 0.62);
-      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-      border-radius: 10px;
+      background: var(--lf-paper);
+      border: 1px solid var(--lf-line);
+      border-radius: 6px;
       padding: 8px 14px;
       text-align: center;
+      box-shadow: 0 2px 10px rgba(30, 20, 10, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.7);
       animation: lf-vin .18s ease both;
     }
     .line.hidden { display: none; }
     .line .orig {
       font-size: calc(var(--lf-fs, 20px) * 0.78);
-      color: #dfe3ee; opacity: 0.78; margin-bottom: 2px;
+      color: var(--lf-ink-2); opacity: 0.85; margin-bottom: 2px;
     }
     .line .orig.hidden { display: none; }
     .line .trans {
-      font-size: var(--lf-fs, 20px); font-weight: 600; color: #fff;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      font-size: var(--lf-fs, 20px); font-weight: 600; color: var(--lf-ink);
+      font-family: var(--lf-serif);
+      letter-spacing: 0.01em;
       word-break: break-word;
     }
-    .line .trans.err { color: #fca5a5; font-weight: 400; font-size: calc(var(--lf-fs, 20px) * 0.8); }
+    .line .trans.err { color: #8f2c23; font-weight: 400; font-size: calc(var(--lf-fs, 20px) * 0.8); }
 
     /* ---- 直播滚动字幕 ---- */
     .stack {
@@ -265,56 +306,59 @@
       max-width: 86%;
     }
     .stack .sl {
-      background: rgba(8, 10, 16, 0.55);
-      border-radius: 8px;
+      background: rgba(250, 245, 234, 0.9);
+      border: 1px solid var(--lf-line);
+      border-radius: 5px;
       padding: 5px 12px;
       text-align: center;
+      box-shadow: 0 1px 6px rgba(30, 20, 10, 0.22);
       animation: lf-vin .18s ease both;
     }
     .stack .sl .so {
       font-size: calc(var(--lf-fs, 20px) * 0.66);
-      color: #c7cddd; opacity: 0.8;
+      color: var(--lf-ink-2); opacity: 0.8;
     }
     .stack .sl .so.hidden { display: none; }
     .stack .sl .st.hidden { display: none; }
     .stack .sl .st {
       font-size: calc(var(--lf-fs, 20px) * 0.86);
-      font-weight: 600; color: #fff;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      font-weight: 600; color: var(--lf-ink);
+      font-family: var(--lf-serif);
       word-break: break-word;
     }
-    .stack .sl.err .st { color: #fca5a5; font-weight: 400; }
+    .stack .sl.err .st { color: #8f2c23; font-weight: 400; }
     .stack .sl.hint .st {
-      font-weight: 400; color: #c7cddd; opacity: 0.8;
+      font-weight: 400; color: var(--lf-ink-3); opacity: 0.9;
       font-size: calc(var(--lf-fs, 20px) * 0.72);
+      font-family: inherit;
     }
-    .stack .sl.old { opacity: 0.55; }
+    .stack .sl.old { opacity: 0.62; }
     .stack .sl.old .st { font-size: calc(var(--lf-fs, 20px) * 0.72); }
 
-    /* ---- 直播徽标 ---- */
+    /* ---- 直播徽标：一枚小标签 ---- */
     .badge {
       position: absolute; top: 12px; right: 12px;
       display: flex; align-items: center; gap: 7px;
-      background: rgba(8, 10, 16, 0.75);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      color: #fff; font-size: 12px; letter-spacing: 0.02em;
+      background: rgba(250, 245, 234, 0.94);
+      border: 1px solid var(--lf-line);
+      color: var(--lf-ink); font-size: 12px; letter-spacing: 0.06em;
       padding: 5px 6px 5px 11px;
-      border-radius: 99px;
+      border-radius: 4px;
       pointer-events: auto;
-      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 1px 8px rgba(30, 20, 10, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.7);
     }
     .badge.hidden { display: none; }
     .badge .pulse {
       width: 8px; height: 8px; border-radius: 50%;
-      background: #f43f5e; animation: lf-blink 1.2s ease infinite;
+      background: var(--lf-seal); animation: lf-blink 1.2s ease infinite;
     }
     .badge button {
-      border: none; background: rgba(255,255,255,0.12); color: #fff;
-      width: 18px; height: 18px; border-radius: 50%;
+      border: 1px solid var(--lf-line); background: rgba(72, 58, 40, 0.06); color: var(--lf-ink);
+      width: 18px; height: 18px; border-radius: 3px;
       cursor: pointer; font-size: 10px;
       display: flex; align-items: center; justify-content: center;
     }
-    .badge button:hover { background: rgba(255,255,255,0.25); }
+    .badge button:hover { background: rgba(72, 58, 40, 0.14); }
 
     @keyframes lf-vin { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
     @keyframes lf-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
@@ -651,16 +695,22 @@
         return;
       }
       let settled = false;
+      let timer = 0;
+      // 必须保存同一个函数引用再移除：匿名箭头函数无法 removeEventListener，
+      // 每片泄漏 2 个监听器，直播一小时后 updateend 要遍历数千个死回调。
       const finish = (r) => {
         if (settled) return;
         settled = true;
-        sb.removeEventListener('updateend', finish);
-        sb.removeEventListener('error', finish);
+        sb.removeEventListener('updateend', onUpdateEnd);
+        sb.removeEventListener('error', onError);
+        if (timer) clearTimeout(timer);
         resolve(r);
       };
-      sb.addEventListener('updateend', () => finish('ok'));
-      sb.addEventListener('error', () => finish('retry'));
-      setTimeout(() => finish('retry'), 3000); // 异常卡住时重试，不丢分片
+      const onUpdateEnd = () => finish('ok');
+      const onError = () => finish('retry');
+      sb.addEventListener('updateend', onUpdateEnd);
+      sb.addEventListener('error', onError);
+      timer = setTimeout(() => finish('retry'), 3000); // 异常卡住时重试，不丢分片
       blob.arrayBuffer().then((buf) => {
         try { sb.appendBuffer(buf); }
         catch (e) {
@@ -804,7 +854,6 @@
     // z-index 会视觉遮挡控制条）；同层级下 DOM 顺序后者绘制在上——紧随原视频即可盖住它，
     // 而控制条等后续兄弟元素仍在覆盖层之上。z-index 与原视频取同值（同值时 DOM 序决胜）。
     const anchor = v.parentElement || liveAnchor();
-    const fixed = false; // 挂在视频父级内，无需 fixed
     const host = document.createElement('div');
     host.id = 'lf-sync-host';
     host.setAttribute('data-lf-skip', '1');
@@ -951,7 +1000,9 @@
         resp({ ok: true });
         return false;
       case 'lf:liveCaption':
-        state.live = true;
+        // 不在这里置 live=true：停止后迟到的字幕会把状态改回去，徽标/按钮随之错乱。
+        // 直播标记只由 lf:liveStarted / lf:liveEnd / lf:liveError 维护。
+        if (!state.live) { resp({ ok: true }); return false; }
         handleLiveCaption(msg); // 内部按「语音时刻 + 同步延迟」定时上屏
         resp({ ok: true });
         return false;
@@ -975,6 +1026,7 @@
         stopSyncVideo();          // 移除视频延迟覆盖层（原画面即刻恢复）
         clearPendingCaptions();   // 丢弃未到展示时刻的字幕
         hideLiveBadge();
+        if (state.ui) state.ui.stack.innerHTML = ''; // 清掉残留在画面上的历史字幕行
         resp({ ok: true });
         return false;
       default:
@@ -1004,6 +1056,7 @@
     clearInterval(state.playerTimer); state.playerTimer = null;
     clearInterval(state.subTimer); state.subTimer = null;
     clearInterval(state.ttTimer); state.ttTimer = null;
+    clearTimeout(sub.timer); sub.cueText = ''; sub.translatedFor = '';
     if (state.obs) { state.obs.disconnect(); state.obs = null; }
     if (state.ro) { state.ro.disconnect(); state.ro = null; }
     restoreNativeCaptions();

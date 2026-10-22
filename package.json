@@ -1,0 +1,16 @@
+{
+  "name": "bpflow-translation",
+  "version": "1.2.1",
+  "private": true,
+  "description": "BPFlow 实时翻译 —— Chrome MV3 扩展。无构建步骤；测试用 node 内置能力，lint 仅开发期依赖。",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "check": "node scripts/syntax-check.js",
+    "lint": "eslint .",
+    "verify": "npm run check && npm run lint && npm test"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.4",
+    "globals": "^15.15.0"
+  }
+}
