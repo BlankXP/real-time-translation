@@ -264,6 +264,7 @@
             <div class="field" data-page-node-id="fAqFYtXYEAR4EFmshfteT1">
               <label data-page-node-id="QamlHLKpTWdqRUuHFXdyh8">接口地址 Base URL <span class="req" data-page-node-id="qVSuuFMRJJmquiT12AwoEX">*</span></label>
               <input type="text" id="v-oa-baseurl" placeholder="https://api.openai.com/v1" spellcheck="false" data-page-node-id="cWyV71rEhCJqGq4C2WUmwm">
+              <span class="hint" id="v-oa-baseurl-hint">音频与密钥会发送到该地址；密钥仅保存在本机浏览器</span>
             </div>
             <div class="field" data-page-node-id="j1gcwvtu7SBTQAH6xwiXvI">
               <label data-page-node-id="OvWXybKGzDHYjyek0wsjj0">转写模型 <span class="req" data-page-node-id="oykPfQFzyYedRJkp9zwSYV">*</span></label>
@@ -292,7 +293,7 @@
             <span class="hint" data-page-node-id="X5jgN56aXW5sDu77lZ9RME">单独补偿画面相对声音的偏差：画面链路（1 秒分片 + 缓冲）固有延迟比声音多约 <b data-page-node-id="f0HZTGsuc6hkSEAsxDwSFN">1~2 秒</b>。<b data-page-node-id="BESva9cKHCtK9NhAzMPulE">画面慢于声音（口型对不上）→ 负值</b>让画面提前；画面快于声音 → 正值。步进 0.25 秒，对照口型微调。修改后需重新开启直播字幕生效</span>
           </div>
           <div class="field" id="v-field-apikey-hint" data-page-node-id="7cPE3L9xqCmDNdgxHy340m">
-            <span class="hint" data-page-node-id="ZdTwAdtt0YMrRjIGBea1ED">音频编码为 <b data-page-node-id="x8HqJsQPosVhYkynoYpdUQ">WAV 16kHz 单声道</b>、约 5 秒一片上传。配置仅保存在你自己的浏览器中</span>
+            <span class="hint" data-page-node-id="ZdTwAdtt0YMrRjIGBea1ED">音频编码为 <b data-page-node-id="x8HqJsQPosVhYkynoYpdUQ">WAV 16kHz 单声道</b>、约 5 秒一片上传。配置保存在本机，密钥不参与 Chrome 账号同步</span>
           </div>
           <div class="field" data-page-node-id="TqLgC5Fj3k75NE25K3I85h">
             <label data-page-node-id="tgEu8lAXgUnK5AxssrNdpG">源语言提示 <span class="hint" data-page-node-id="ALLkA52jHKf6nh2RskrpVJ">（提升识别准确率，不确定就选自动）</span></label>
@@ -415,6 +416,7 @@
         <div class="field" data-page-node-id="nSNl0aroWyYQzkbQGb6LMY">
           <label data-page-node-id="LY4X2GTwNaSHHBWD9SH9WV">接口地址 Base URL <span class="req" data-page-node-id="ydYY5TW99bvpFDnxPEdFDN">*</span></label>
           <input type="text" id="f-baseurl" placeholder="https://api.deepseek.com/v1" spellcheck="false" data-page-node-id="GqHaYkKbGhBKXJ2jEwAiqE">
+          <span class="hint" id="dlg-baseurl-hint">原文会发送到该地址；密钥仅保存在本机浏览器</span>
         </div>
         <div class="field" data-page-node-id="hFn40CPXbRcVvVBf9LvM5E">
           <label data-page-node-id="BgiWL4EaUGDR55Hopxf3OB">模型名称 <span class="req" data-page-node-id="3StGjjHOn7ILOf2VuMs9kX">*</span></label>
@@ -426,7 +428,7 @@
             <input type="password" id="f-apikey" placeholder="sk-…" spellcheck="false" data-page-node-id="oBrwE3KBNKEWQ6DTNbwJut">
             <button type="button" class="eye" id="btn-eye" data-page-node-id="tVVtm0b6nfUD8ooIAbwSXD">显示</button>
           </div>
-          <span class="hint" data-page-node-id="LxWzCO6BZLNuuSwXPOixYI">仅保存在你自己的浏览器中，不会上传到任何服务器</span>
+          <span class="hint" data-page-node-id="LxWzCO6BZLNuuSwXPOixYI">仅保存在本机浏览器（不参与 Chrome 账号同步），不会发送给本扩展作者；翻译时页面原文会发往上方填写的接口地址</span>
         </div>
         <details class="adv-details" data-page-node-id="acN3pUepDlHyvhH1PkYGUa">
           <summary data-page-node-id="Ds1HxanVu8d88qbiqDPyrl">高级选项</summary>
@@ -474,9 +476,9 @@
 
   <div class="toast hidden" id="toast" data-page-node-id="Ows1HgSyAEA5VnKxFfnzka"></div>
 
-  <script src="../shared/preview-shim.js"></script>
   <script src="../shared/langs.js"></script>
   <script src="../shared/defaults.js"></script>
+  <script src="../shared/preview-shim.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

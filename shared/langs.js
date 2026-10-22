@@ -58,12 +58,19 @@
   function langName(code) { const l = BY_CODE[code]; return l ? l.name : code; }
   function langLabel(code) { const l = BY_CODE[code]; return l ? l.label : code; }
 
-  /** 轻量语种探测（供不支持 auto 的引擎使用） */
+  /**
+   * 轻量语种探测（供不支持 auto 的引擎使用）。
+   * 顺序有讲究：日语常用文本几乎都含汉字（「今日はいい天気」含 今日/天気），
+   * 先判汉字会把日语一律判成中文 → 假名优先、其次韩文、最后才是汉字。
+   */
   function quickDetect(text) {
     const t = String(text || '');
-    if (/[\u4e00-\u9fff]/.test(t)) return 'zh-CN';
-    if (/[\u3040-\u309f\u30a0-\u30ff]/.test(t)) return 'ja';
+    const kana = (t.match(/[\u3040-\u30ff]/g) || []).length;
+    const han = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+    // 假名占比够高即判日语（纯汉字日语无解，这是启发式探测的固有上限）
+    if (kana > 0 && kana / Math.max(1, kana + han) >= 0.15) return 'ja';
     if (/[\uac00-\ud7af]/.test(t)) return 'ko';
+    if (han > 0) return 'zh-CN';
     if (/[\u0400-\u04ff]/.test(t)) return 'ru';
     if (/[\u0600-\u06ff]/.test(t)) return 'ar';
     if (/[\u0590-\u05ff]/.test(t)) return 'he';

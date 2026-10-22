@@ -57,8 +57,9 @@
 
     try { els.ver.textContent = chrome.runtime.getManifest().version; } catch (e) { /* noop */ }
 
-    const o = await chrome.storage.sync.get('settings');
-    state.settings = LF_MERGE(LF_DEFAULTS, (o && o.settings) || {});
+    // 只取公开设置（不含 apiKey，密钥在 storage.local 由后台合并使用）
+    const pub = await send({ type: 'lf:getSettings' });
+    state.settings = LF_MERGE(LF_DEFAULTS, (pub && pub.ok && pub.settings) ? pub.settings : {});
 
     // 当前标签页与翻译状态
     if (window.__LF_PREVIEW__) {
@@ -167,7 +168,9 @@
   /* ---------- 事件 ---------- */
 
   async function patch(diff) {
-    state.settings = LF_MERGE(state.settings, diff);
+    // 读-改-写：只合并本次改动，不把整份快照盖回去（否则会覆盖别的页面刚做的修改）
+    const o = await chrome.storage.sync.get('settings');
+    state.settings = LF_MERGE(LF_MERGE(LF_DEFAULTS, (o && o.settings) || {}), diff);
     await chrome.storage.sync.set({ settings: state.settings });
   }
 

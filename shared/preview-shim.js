@@ -17,7 +17,8 @@
   if (!data) {
     data = JSON.parse(JSON.stringify(globalThis.LF_DEFAULTS || {}));
     // 预览演示：多启用一个 AI 供应商，便于查看完整卡片效果
-    data.providers = data.providers.concat([{
+    // 注意：本文件依赖 shared/defaults.js 先加载（否则 LF_DEFAULTS 不存在，页面会静默挂掉）
+    data.providers = (data.providers || []).concat([{
       id: 'demo-ai', type: 'openai', name: 'DeepSeek', enabled: true,
       baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat', temperature: 0.1
     }]);
@@ -57,7 +58,7 @@
     },
     runtime: {
       id: 'preview',
-      getManifest: () => ({ version: '1.1.0', name: 'BPFlow 实时翻译（预览）' }),
+      getManifest: () => ({ version: '1.2.1', name: 'BPFlow 实时翻译（预览）' }),
       openOptionsPage: () => { location.href = '../options/options.html'; },
       sendMessage: (msg, cb) => { if (typeof cb === 'function') cb(null); return Promise.resolve(null); },
       onMessage: { addListener() { /* noop */ } },

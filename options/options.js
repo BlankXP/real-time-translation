@@ -1,23 +1,57 @@
 /* BPFlow — 设置页逻辑 */
 /* global LF, LF_DEFAULTS, LF_MERGE, LF_PRESETS, LF_VOICE_PRESETS,
-   LF_BAILIAN_MODELS, LF_BAILIAN_MODEL, LF_MIGRATE_VOICE, LF_MIGRATE_SETTINGS, LF_RESOLVE_VOICE */
+   LF_BAILIAN_MODELS, LF_BAILIAN_MODEL, LF_MIGRATE_VOICE, LF_MIGRATE_SETTINGS,
+   LF_VALIDATE_SETTINGS, LF_SPLIT_SECRETS, LF_APPLY_SECRETS, LF_MERGE_SECRETS, LF_VALIDATE_ENDPOINT */
 (() => {
   'use strict';
 
   const $ = (id) => document.getElementById(id);
 
-  let S = null;            // 当前设置
+  /* 密钥只存 storage.local，公开设置存 storage.sync（不随 Chrome 账号同步） */
+  const SECRET_KEY = 'lf:secrets';
+
+  let S = null;            // 当前设置（含密钥，仅供本页编辑使用）
   let editingId = null;    // 正在编辑的引擎 id（null = 新增）
   let dlgType = 'openai';  // 对话框当前引擎类型
 
   /* ==================== 基础 ==================== */
 
+  async function readSecrets() {
+    try {
+      const o = await chrome.storage.local.get(SECRET_KEY);
+      return LF_MERGE_SECRETS({}, (o && o[SECRET_KEY]) || {});
+    } catch (e) { return LF_MERGE_SECRETS(); }
+  }
+
   async function load() {
     const o = await chrome.storage.sync.get('settings');
-    S = LF_MIGRATE_SETTINGS(LF_MERGE(LF_DEFAULTS, (o && o.settings) || {}));
+    let pub = LF_MIGRATE_SETTINGS(LF_MERGE(LF_DEFAULTS, (o && o.settings) || {}));
+    const split = LF_SPLIT_SECRETS(pub);
+    let secrets = await readSecrets();
+    if (split.hadKeys) {
+      // 一次性迁移：老版本把 API Key 存在 sync 里，搬到 local 并从 sync 抹掉。
+      // 本地写失败就先别动 sync —— 否则密钥会两边都没有。
+      secrets = LF_MERGE_SECRETS(secrets, split.secrets);
+      let persisted = false;
+      try {
+        await chrome.storage.local.set({ [SECRET_KEY]: secrets });
+        persisted = true;
+      } catch (e) { /* 保留 sync 里的旧值，下次打开设置页再试 */ }
+      if (persisted) {
+        try { await chrome.storage.sync.set({ settings: split.pub }); } catch (e) { /* 下次再清 */ }
+        pub = split.pub;
+      }
+    }
+    S = LF_APPLY_SECRETS(pub, secrets);
   }
+
   async function save() {
-    await chrome.storage.sync.set({ settings: S });
+    const split = LF_SPLIT_SECRETS(S);
+    // 以当前表单为权威，直接覆盖写：S 里的 apiKey 在 load() 时已由本地密钥回填过，
+    // 因此「为空」就代表用户主动清空了它。若与旧值合并，被清掉的密钥会在下次加载时复活，
+    // 用户以为删干净了，后台却仍在用旧 Key 发请求。
+    await chrome.storage.local.set({ [SECRET_KEY]: split.secrets });
+    await chrome.storage.sync.set({ settings: split.pub });
   }
 
   function send(msg) {
@@ -62,18 +96,17 @@
     const meta = LF.ENGINES[p.type] || {};
     if (p.type === 'openai') {
       return esc(p.baseUrl || '未配置接口地址') + (p.model ? ' · <b>' + esc(p.model) + '</b>' : '')
-        + (p.apiKey ? ' · 🔑 已配置密钥' : ' · <b style="color:#fbbf24">未配置密钥</b>');
+        + (p.apiKey ? ' · 🔑 已配置密钥' : ' · <b style="color:#a2701c">未配置密钥</b>');
     }
     if (p.type === 'deepl') {
       return (p.plan === 'pro' ? 'Pro 版接口' : '免费版接口')
-        + (p.apiKey ? ' · 🔑 已配置密钥' : ' · <b style="color:#fbbf24">未配置密钥</b>');
+        + (p.apiKey ? ' · 🔑 已配置密钥' : ' · <b style="color:#a2701c">未配置密钥</b>');
     }
     return esc(meta.desc || '');
   }
 
   function renderProviders() {
     const wrap = $('provider-list');
-    const enabledCount = S.providers.filter((p) => p.enabled !== false).length;
 
     wrap.innerHTML = S.providers.map((p) => {
       const meta = LF.ENGINES[p.type] || {};
@@ -181,8 +214,16 @@
     $('f-prompt').value = p ? (p.promptTemplate || '') : '';
     $('f-deepl-key').value = p && p.type === 'deepl' ? (p.apiKey || '') : '';
 
+    // 恢复 DeepL 账户类型：对话框里「免费版」写死了 active，不还原的话编辑 Pro 配置
+    // 保存时会读成 free → 请求打到 api-free 域名 → Pro Key 直接 401/403（静默改坏配置）
+    const plan = (p && p.type === 'deepl' && p.plan === 'pro') ? 'pro' : 'free';
+    $('seg-plan').querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.plan === plan);
+    });
+
     renderPresets();
     syncDialogType();
+    updateDlgBaseUrlHint();
     dlg().showModal();
   }
 
@@ -218,6 +259,17 @@
     syncDialogType();
   });
 
+  // 接口地址提示：让用户明确知道原文会发往哪个主机（协议校验见保存逻辑）
+  function updateDlgBaseUrlHint() {
+    const v = $('f-baseurl').value.trim();
+    let host = '';
+    try { host = v ? new URL(v).host : ''; } catch (e) { host = ''; }
+    $('dlg-baseurl-hint').textContent = host
+      ? '原文会发送到 ' + host + '；密钥仅保存在本机浏览器，不随账号同步'
+      : '原文会发送到该地址；密钥仅保存在本机浏览器，不随账号同步';
+  }
+  $('f-baseurl').addEventListener('input', updateDlgBaseUrlHint);
+
   $('btn-eye').addEventListener('click', () => {
     const inp = $('f-apikey');
     inp.type = inp.type === 'password' ? 'text' : 'password';
@@ -239,19 +291,31 @@
   $('dlg-close').addEventListener('click', () => dlg().close());
   $('dlg-cancel').addEventListener('click', () => dlg().close());
 
+  // 对话框打开期间若外部改过设置，S 已更新但页面没重绘，关闭时补一次
+  let pendingExternal = false;
+  dlg().addEventListener('close', () => {
+    if (!pendingExternal) return;
+    pendingExternal = false;
+    renderAll();
+  });
+
   $('dlg-save').addEventListener('click', async () => {
     const name = $('f-name').value.trim();
+    // 编辑已有引擎时，名称留空应保留原名，而不是被覆盖成类型默认名
+    const prevName = editingId ? ((S.providers.find((x) => x.id === editingId) || {}).name || '') : '';
+    const keepName = (fallback) => name || prevName || fallback;
     let provider;
 
     if (dlgType === 'openai') {
-      const baseUrl = $('f-baseurl').value.trim().replace(/\/+$/, '');
+      const check = LF_VALIDATE_ENDPOINT($('f-baseurl').value);
+      if (!check.ok) return toast(check.error, 'err');
+      const baseUrl = check.url;
       const model = $('f-model').value.trim();
-      if (!/^https?:\/\/.+/.test(baseUrl)) return toast('请填写合法的接口地址（以 http(s):// 开头）', 'err');
       if (!model) return toast('请填写模型名称', 'err');
       provider = {
         id: editingId || 'p' + Date.now().toString(36),
         type: 'openai',
-        name: name || 'AI 模型',
+        name: keepName('AI 模型'),
         enabled: true,
         baseUrl,
         model,
@@ -265,7 +329,7 @@
       provider = {
         id: editingId || 'p' + Date.now().toString(36),
         type: 'deepl',
-        name: name || 'DeepL',
+        name: keepName('DeepL'),
         enabled: true,
         apiKey,
         plan: $('seg-plan').querySelector('.active').dataset.plan
@@ -275,7 +339,7 @@
       provider = {
         id: editingId || dlgType + '-' + Date.now().toString(36),
         type: dlgType,
-        name: name || (meta.label || dlgType),
+        name: keepName(meta.label || dlgType),
         enabled: true,
         builtin: true
       };
@@ -572,11 +636,19 @@
     reader.onload = async () => {
       try {
         const data = JSON.parse(String(reader.result));
-        if (!data || !Array.isArray(data.providers)) throw new Error('格式不正确');
-        S = LF_MIGRATE_SETTINGS(LF_MERGE(LF_DEFAULTS, data));
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('格式不正确：不是设置对象');
+        if (!Array.isArray(data.providers)) throw new Error('格式不正确：缺少 providers 数组');
+        // 逐项校验并收敛：脏数值（如 advanced.maxCache = -1）会让后台缓存淘汰死循环卡死 SW
+        const checked = LF_VALIDATE_SETTINGS(data);
+        S = checked.settings;
         await save();
         renderAll();
-        toast('设置已导入', 'ok');
+        if (checked.fixes.length) {
+          console.warn('[LF] 导入时已修正以下异常项：\n' + checked.fixes.join('\n'));
+          toast('设置已导入，已修正 ' + checked.fixes.length + ' 项异常值（详见控制台）', 'ok');
+        } else {
+          toast('设置已导入', 'ok');
+        }
       } catch (err) {
         toast('导入失败：' + err.message, 'err');
       }
@@ -588,6 +660,7 @@
   $('btn-reset').addEventListener('click', async () => {
     if (!confirm('确定恢复全部默认设置吗？引擎配置与站点规则都会被重置（API Key 将丢失）。')) return;
     S = JSON.parse(JSON.stringify(LF_DEFAULTS));
+    await chrome.storage.local.set({ [SECRET_KEY]: LF_MERGE_SECRETS() }); // 一并清空本地密钥
     await save();
     renderAll();
     toast('已恢复默认设置', 'ok');
@@ -644,6 +717,11 @@
     $('v-oa-baseurl').value = oa.baseUrl || '';
     $('v-oa-model').value = oa.model || '';
     $('v-oa-apikey').value = oa.apiKey || '';
+    let oaHost = '';
+    try { oaHost = oa.baseUrl ? new URL(oa.baseUrl).host : ''; } catch (e) { oaHost = ''; }
+    $('v-oa-baseurl-hint').textContent = oaHost
+      ? '音频与密钥会发送到 ' + oaHost + '；密钥仅保存在本机浏览器，不随账号同步'
+      : '音频与密钥会发送到该地址；密钥仅保存在本机浏览器，不随账号同步';
     $('v-presets').innerHTML = LF_VOICE_PRESETS.map((p) =>
       '<button type="button" class="preset-chip'
       + (p.baseUrl === oa.baseUrl && p.model === oa.model ? ' active' : '')
@@ -701,6 +779,16 @@
     const val = $('v-bl-baseurl-custom').value.trim().replace(/\/+$/, '');
     if (val && val.includes('{WorkspaceId}')) {
       toast('请把 {WorkspaceId} 替换为真实业务空间 ID', 'err');
+      $('v-bl-baseurl-custom').value = cur.baseUrl || '';
+      return;
+    }
+    if (val) {
+      const check = LF_VALIDATE_ENDPOINT(val);
+      if (!check.ok) {
+        toast(check.error, 'err');
+        $('v-bl-baseurl-custom').value = cur.baseUrl || '';
+        return;
+      }
     }
     patchVoice({ bailian: Object.assign({}, cur, { baseUrl: val }) });
     await save(); renderVideoTab();
@@ -713,7 +801,16 @@
 
   $('v-oa-baseurl').addEventListener('change', async () => {
     const cur = (S.voice && S.voice.openai) || {};
-    patchVoice({ openai: Object.assign({}, cur, { baseUrl: $('v-oa-baseurl').value.trim().replace(/\/+$/, '') }) });
+    const val = $('v-oa-baseurl').value.trim().replace(/\/+$/, '');
+    if (val) {
+      const check = LF_VALIDATE_ENDPOINT(val);
+      if (!check.ok) {
+        toast(check.error, 'err');
+        $('v-oa-baseurl').value = cur.baseUrl || '';
+        return;
+      }
+    }
+    patchVoice({ openai: Object.assign({}, cur, { baseUrl: val }) });
     await save(); renderVideoTab();
   });
   $('v-oa-model').addEventListener('change', async () => {
@@ -798,10 +895,16 @@
     await load();
     renderAll();
 
-    chrome.storage.onChanged.addListener((changes, area) => {
+    chrome.storage.onChanged.addListener(async (changes, area) => {
       if (area !== 'sync' || !changes.settings) return;
-      S = LF_MERGE(LF_DEFAULTS, changes.settings.newValue || {});
-      if (!dlg().open) renderAll();
+      // S 必须始终跟上外部变更（弹窗改了语言、别的窗口改了引擎…），
+      // 否则这里保存时会把整份旧快照写回去，撤销对方的修改。
+      await load();            // 必须重新合并 local 里的密钥，否则会误显示「未配置密钥」
+      if (dlg().open) {        // 编辑中不重绘，避免冲掉用户正在输入的字段
+        pendingExternal = true;
+        return;
+      }
+      renderAll();
     });
   }
 

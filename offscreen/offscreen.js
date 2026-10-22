@@ -7,8 +7,10 @@
  */
 'use strict';
 
-/* tabId -> { stream, audioEl, controller } */
+/* tabId -> { stream, audioEl, controller, playCtx, gen, stopped, controllers } */
 const sessions = new Map();
+/** 正在 getUserMedia、尚未建立会话的标签页；此期间收到停止请求需要作废本次启动 */
+const startingTabs = new Set();
 
 /* ============================== 链路日志 ============================== */
 
@@ -56,7 +58,8 @@ function pickMime() {
 
 async function startCapture(msg) {
   const { tabId, streamId, voice } = msg;
-  stopCapture(tabId); // 幂等：重复启动安全
+  stopCapture(tabId); // 幂等：重复启动安全（同时作废上一次未完成的启动）
+  startingTabs.add(tabId);
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -64,6 +67,12 @@ async function startCapture(msg) {
       },
       video: false
     });
+    if (!startingTabs.delete(tabId)) {
+      // 启动过程中（getUserMedia 等待期间）用户已点停止：直接释放，别留下幽灵会话
+      try { stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* noop */ }
+      log(tabId, '启动过程中收到停止请求，已取消本次捕获');
+      return { ok: false, error: '启动已取消' };
+    }
 
     // tab 捕获会接管页面声音，必须回放还给用户。
     // 「同步延迟」开启时（playbackDelayMs>0），回放经 Web Audio DelayNode 延迟：
@@ -127,13 +136,60 @@ async function startCapture(msg) {
     }
     // HTTP 分片协议：录音 + 转码为 WAV(16kHz 单声道)，再送转写
     log(tabId, '音频捕获成功（音轨 ' + tracks.length + ' 条），开始滚动录音');
-    controller = createWavRecorder(stream, tabId, voice);
-    sessions.set(tabId, { stream, audioEl, controller, playCtx });
+    const session = {
+      stream,
+      audioEl,
+      playCtx,
+      controller: null,
+      gen: msg.gen || '',
+      stopped: false,
+      controllers: new Set() // 在途转写请求的控制器：停止时统一 abort
+    };
+    controller = createWavRecorder(stream, tabId, voice, session);
+    session.controller = controller;
+    sessions.set(tabId, session);
     return { ok: true };
   } catch (e) {
+    startingTabs.delete(tabId);
     log(tabId, '音频捕获失败：' + ((e && e.message) || String(e)));
     return { ok: false, error: (e && e.message) ? e.message : String(e) };
   }
+}
+
+/** 同时在处理的分片数上限（解码 + 转写；不设上限会让延迟与额度一起失控） */
+const PIPE_MAX_INFLIGHT = 2;
+/** 待处理队列上限（4 片 ≈ 20 秒）；超出丢弃最旧，避免字幕延迟无限累积 */
+const PIPE_MAX_QUEUE = 4;
+
+/**
+ * 有序交付管道：分片可以乱序完成，但只能按 seq 顺序交付。
+ * 空文本（静音/失败/被丢弃）也占位释放闸门，否则后面所有片会一直等。
+ * @param {(text: string, at: number) => void} onDeliver
+ */
+function createOrderedPipe(onDeliver) {
+  let deliverSeq = 1;          // 下一个可交付的序号
+  const outbox = new Map();    // seq -> { text, at }
+
+  function flush() {
+    while (outbox.has(deliverSeq)) {
+      const it = outbox.get(deliverSeq);
+      outbox.delete(deliverSeq);
+      deliverSeq++;
+      if (it.text) {
+        try { onDeliver(it.text, it.at); } catch (e) { /* noop */ }
+      }
+    }
+  }
+
+  return {
+    settle(seq, text, at) {
+      outbox.set(seq, { text: text || '', at: Number(at) || 0 });
+      flush();
+    },
+    reset() { outbox.clear(); deliverSeq = 1; },
+    /** 已就绪但还在等前面分片的条数（调试钩子） */
+    waiting() { return outbox.size; }
+  };
 }
 
 /**
@@ -147,46 +203,99 @@ async function startCapture(msg) {
  * 不用 recorder.start(timeslice)：timeslice 分片除首片外缺少容器头，无法独立解码；
  * 每片独立 stop 出来的 blob 才是完整可解码的 webm。
  */
-function createWavRecorder(stream, tabId, voice) {
-  let stopped = false;
+function createWavRecorder(stream, tabId, voice, session) {
+  const S = session || { stopped: false, controllers: new Set(), gen: '' };
   const mime = pickMime();
   let rec = null;
   let firstDone = false;
-  let seq = 0; // 分片序号（日志用）
 
   /**
-   * 处理一片录音：转码 WAV → 送转写。
-   * @param {Blob} blob 本片 webm 数据
-   * @param {number} beganAt 本片开始录音的墙钟时间（作为 speechAt 传给字幕定时）
+   * 有序流水线。
+   * 背景：每片录完就去转写，网络快慢不同 → 后录的片可能先返回；直接按完成顺序上屏
+   * 会让字幕乱序，慢服务下还会多片并发烧额度。这里做三件事：
+   *   1) 并发上限 PIPE_MAX_INFLIGHT（背压）
+   *   2) 队列积压超过 PIPE_MAX_QUEUE 时丢弃最旧（延迟优先于完整）
+   *   3) 结果按 seq 顺序交付（createOrderedPipe）
    */
-  async function handleChunk(blob, beganAt) {
-    const n = ++seq;
-    log(tabId, '片#' + n + ' 录制完成：webm ' + blob.size + 'B');
+  const pipe = createOrderedPipe((text, at) => deliver(text, at));
+  const inflight = { n: 0 };
+  const queue = [];
+  let enqueueSeq = 0; // 已入队的最大序号
+
+  function deliver(text, at) {
+    if (!text || S.stopped) return;
+    log(tabId, '转写文本已发送给后台翻译');
     try {
-      const wav = await toWav16k(blob, tabId);
-      if (!wav) {
-        log(tabId, '片#' + n + ' 判定为静音或无语音，跳过转写');
-        // 静音/无语音片：首片时提示一次，之后保持安静，避免刷屏
-        if (!firstDone) {
-          firstDone = true;
-          notice(tabId, 'info', '已捕获音频流，但这段是静音或无语音（可能是音乐/音效，请确认页面正在说话）');
-        }
-        return;
-      }
-      log(tabId, '片#' + n + ' 转码 WAV ' + wav.size + 'B（约' + Math.round((wav.size - 44) / 32000) + 's），送转写');
+      chrome.runtime.sendMessage({ type: 'lf:asrResult', tabId, text, speechAt: at, gen: S.gen || '' },
+        () => { void chrome.runtime.lastError; });
+    } catch (e) { /* noop */ }
+  }
+
+  /** 一片有了结论（无论有无文本）：登记结果并尝试按序交付 */
+  function settle(seq, text, at) {
+    if (S.stopped) return;
+    pipe.settle(seq, text, at);
+  }
+
+  /** 处理一片：转码 → VAD → 转写，返回文本（空串表示无内容/失败，仍要占位保序） */
+  async function processChunk(item) {
+    const n = item.seq;
+    if (S.stopped) return '';
+    log(tabId, '片#' + n + ' 开始处理：webm ' + item.blob.size + 'B');
+    const wav = await toWav16k(item.blob, tabId);
+    if (S.stopped) {
+      log(tabId, '片#' + n + ' 转码期间已停止，丢弃');
+      return '';
+    }
+    if (!wav) {
+      log(tabId, '片#' + n + ' 判定为静音或无语音，跳过转写');
+      // 静音/无语音片：首片时提示一次，之后保持安静，避免刷屏
       if (!firstDone) {
         firstDone = true;
-        notice(tabId, 'info', '音频就绪（' + Math.round(wav.size / 1024) + 'KB / 片），正在转写…');
+        notice(tabId, 'info', '已捕获音频流，但这段是静音或无语音（可能是音乐/音效，请确认页面正在说话）');
       }
-      await transcribe(wav, tabId, voice, beganAt);
-    } catch (e) {
-      log(tabId, '片#' + n + ' 处理失败：' + ((e && e.message) || String(e)));
-      notice(tabId, 'error', '音频处理失败：' + ((e && e.message) || String(e)));
+      return '';
+    }
+    log(tabId, '片#' + n + ' 转码 WAV ' + wav.size + 'B（约' + Math.round((wav.size - 44) / 32000) + 's），送转写');
+    if (!firstDone) {
+      firstDone = true;
+      notice(tabId, 'info', '音频就绪（' + Math.round(wav.size / 1024) + 'KB / 片），正在转写…');
+    }
+    const text = await transcribe(wav, tabId, voice, S);
+    return text || '';
+  }
+
+  /** 取队列里的片去处理，直到并发打满 */
+  function pump() {
+    if (S.stopped) return;
+    while (inflight.n < PIPE_MAX_INFLIGHT && queue.length) {
+      const item = queue.shift();
+      inflight.n++;
+      processChunk(item)
+        .then((text) => settle(item.seq, text, item.beganAt))
+        .catch((e) => {
+          log(tabId, '片#' + item.seq + ' 处理异常：' + ((e && e.message) || String(e)));
+          settle(item.seq, '', item.beganAt);
+        })
+        .finally(() => { inflight.n--; pump(); });
     }
   }
 
+  /** 入队（录制顺序即序号顺序） */
+  function enqueue(blob, beganAt) {
+    if (S.stopped) return;
+    const item = { seq: ++enqueueSeq, blob, beganAt };
+    queue.push(item);
+    while (queue.length > PIPE_MAX_QUEUE) {
+      const dropped = queue.shift();
+      log(tabId, '处理排队积压，丢弃片#' + dropped.seq + '（避免字幕延迟持续增长）');
+      settle(dropped.seq, '', dropped.beganAt); // 占位释放顺序闸门
+    }
+    pump();
+  }
+
   function begin() {
-    if (stopped) return;
+    if (S.stopped) return;
     const beganAt = Date.now(); // 本片录音起点（字幕对齐用）
     try {
       rec = mime
@@ -197,8 +306,8 @@ function createWavRecorder(stream, tabId, voice) {
     const parts = [];
     rec.ondataavailable = (e) => { if (e.data && e.data.size) parts.push(e.data); };
     rec.onstop = () => {
-      if (parts.length) handleChunk(new Blob(parts, { type: mime || 'audio/webm' }), beganAt);
-      if (!stopped) setTimeout(begin, 120); // 片间极小间隙
+      if (parts.length) enqueue(new Blob(parts, { type: mime || 'audio/webm' }), beganAt);
+      if (!S.stopped) setTimeout(begin, 120); // 片间极小间隙
     };
     rec.start();
     setTimeout(() => {
@@ -210,7 +319,9 @@ function createWavRecorder(stream, tabId, voice) {
 
   return {
     stop() {
-      stopped = true;
+      S.stopped = true;
+      queue.length = 0;
+      pipe.reset();
       try { if (rec && rec.state !== 'inactive') rec.stop(); } catch (e) { /* noop */ }
     }
   };
@@ -447,13 +558,26 @@ function reportFailure(tabId, err) {
  *  - dashscope : POST {base}/services/aigc/multimodal-generation/generation（JSON + Base64）
  * @param {number} speechAt 该片音频的起始墙钟时间（毫秒）——随消息传递，供字幕按「语音时刻+延迟」定时上屏
  */
-async function transcribe(blob, tabId, voice, speechAt) {
+/**
+ * 单片转写：按协议分发
+ *  - openai    : POST {base}/audio/transcriptions（multipart 上传音频文件）
+ *  - dashscope : POST {base}/services/aigc/multimodal-generation/generation（JSON + Base64）
+ * 只负责拿到文本并返回；何时上屏由调用方的有序流水线决定（见 createWavRecorder）。
+ * @returns {Promise<string>} 转写文本，空串表示无内容/失败/已停止
+ */
+async function transcribe(blob, tabId, voice, session) {
   const v = voice || {};
   const base = String(v.baseUrl || '').replace(/\/+$/, '');
-  if (!base) return;
+  if (!base) return '';
+  if (session && session.stopped) {
+    log(tabId, '会话已停止，放弃本次转写');
+    return '';
+  }
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
+  // 控制器纳入会话集合：stopCapture 时统一 abort，避免停止后还有请求在跑
+  if (session && session.controllers) session.controllers.add(ctrl);
   let text = '';
   const endpoint = (v.protocol === 'dashscope')
     ? base + '/services/aigc/multimodal-generation/generation'
@@ -470,24 +594,34 @@ async function transcribe(blob, tabId, voice, speechAt) {
     // 可跳过的失败（无有效语音 / 网关空错误体拒发）：直接跳过，不算转写失败，不占用失败计数
     if (e && e.skip) {
       log(tabId, '转写跳过：' + ((e && e.message) || ''));
-      return;
+      return '';
+    }
+    if (e && (e.name === 'AbortError' || /aborted|abort/i.test(String(e.message || '')))) {
+      // 只有「会话已停止」才静默；否则这里的 abort 只能来自 30 秒超时，
+      // 必须上报，不然用户只看到字幕不再更新，完全不知道服务已经超时。
+      if (session && session.stopped) {
+        log(tabId, '转写已中止（直播已停止）');
+        return '';
+      }
+      log(tabId, '转写超时（30 秒无响应），已中止本次请求');
+      reportFailure(tabId, new Error('转写请求超时（30 秒无响应），请检查网络或转写服务状态'));
+      return '';
     }
     log(tabId, '转写失败：' + ((e && e.message) || String(e)));
     reportFailure(tabId, e);
-    return; // 单片失败不影响后续分片
+    return ''; // 单片失败不影响后续分片（但这一片仍要占位，保证后续片不被卡住）
   } finally {
     clearTimeout(timer);
+    if (session && session.controllers) session.controllers.delete(ctrl);
   }
 
-  if (text) {
-    log(tabId, '转写文本已发送给后台翻译');
-    try {
-      chrome.runtime.sendMessage({ type: 'lf:asrResult', tabId, text, speechAt },
-        () => { void chrome.runtime.lastError; });
-    } catch (e) { /* noop */ }
-  } else {
-    log(tabId, '转写返回空文本（该片段可能无语音内容）');
+  // 停止后才返回的结果一律丢弃
+  if (session && session.stopped) {
+    log(tabId, '转写返回时会话已停止，丢弃结果');
+    return '';
   }
+  if (!text) log(tabId, '转写返回空文本（该片段可能无语音内容）');
+  return text || '';
 }
 
 /** HTTP 非 2xx：把服务端返回的报错摘要带上，便于定位（模型名/字段/鉴权等） */
@@ -628,10 +762,17 @@ function extractDashScopeText(data) {
 }
 
 function stopCapture(tabId) {
+  startingTabs.delete(tabId); // 作废「启动中」的捕获（getUserMedia 返回后自行释放）
   const s = sessions.get(tabId);
   if (!s) return;
-  log(tabId, '停止音频捕获，清理会话');
+  log(tabId, '停止音频捕获，清理会话（中止在途转写 ' + (s.controllers ? s.controllers.size : 0) + ' 个）');
   sessions.delete(tabId);
+  s.stopped = true;
+  // 先中止在途请求：否则停止后转写仍会返回，后台继续翻译并推字幕
+  if (s.controllers) {
+    s.controllers.forEach((c) => { try { c.abort(); } catch (e) { /* noop */ } });
+    s.controllers.clear();
+  }
   try { s.controller.stop(); } catch (e) { /* noop */ }
   try { if (s.playCtx) s.playCtx.close(); } catch (e) { /* noop */ } // 关闭延迟回放上下文
   try { s.stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* noop */ }
