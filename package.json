@@ -1,6 +1,6 @@
 {
   "name": "bpflow-translation",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "description": "BPFlow 实时翻译 —— Chrome MV3 扩展。无构建步骤；测试用 node 内置能力，lint 仅开发期依赖。",
   "scripts": {

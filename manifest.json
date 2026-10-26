@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BPFlow 实时翻译",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "沉浸式网页实时翻译：双语对照 / 按需替换 / 悬停查看，视频 CC 字幕与直播语音实时双语字幕。支持自选翻译引擎与 AI 模型（OpenAI 兼容 / DeepSeek / Kimi / GLM / DeepL / Bing / Google）与 Whisper 语音转写。",
   "minimum_chrome_version": "116",
   "icons": {
@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*", "file:///*"],
-      "js": ["shared/langs.js", "shared/defaults.js", "content/scan.js", "content/marks.js", "content/ui-css.js", "content/ui-view.js", "content/content.js", "content/video.js"],
+      "js": ["shared/langs.js", "shared/defaults.js", "shared/dom-utils.js", "content/scan.js", "content/marks.js", "content/ui-css.js", "content/ui-view.js", "content/content.js", "content/video.js"],
       "css": ["content/content.css"],
       "run_at": "document_idle",
       "all_frames": false

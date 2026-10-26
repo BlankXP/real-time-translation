@@ -11,7 +11,7 @@ loadShared('shared/defaults.js');
 loadShared('shared/translate-core.js');
 loadShared('background/engines.js');
 
-const { callEngine, humanError, extractJsonArray, API } = globalThis.LF_ENGINES;
+const { callEngine, humanError, extractJsonArray, API, humanFetchError, fetchJSON } = globalThis.LF_ENGINES;
 
 test('按 Service Worker 的加载顺序可正常挂载模块', () => {
   assert.ok(globalThis.LF && globalThis.LF_DEFAULTS);
@@ -19,8 +19,12 @@ test('按 Service Worker 的加载顺序可正常挂载模块', () => {
   assert.ok(globalThis.LF_ENGINES && typeof globalThis.LF_ENGINES.callEngine === 'function');
 });
 
-/** 用固定响应替换全局 fetch（每个用例后自动还原） */
-function withFetch(payload, status, fn) {
+/**
+ * 用固定响应替换全局 fetch（每个用例后自动还原）。
+ * 注意必须 async + `return await fn()`：直接 `return fn()` 会让 finally 在
+ * promise 落定之前就执行，等于把真实 fetch 还回去了 —— 测试会悄悄打真实网络。
+ */
+async function withFetch(payload, status, fn) {
   const prev = globalThis.fetch;
   const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
   globalThis.fetch = async () => ({
@@ -29,7 +33,7 @@ function withFetch(payload, status, fn) {
     text: async () => body
   });
   try {
-    return fn();
+    return await fn();
   } finally {
     globalThis.fetch = prev;
   }
@@ -123,5 +127,103 @@ test('OpenAI 兼容：数量不一致时按行兜底，仍不一致才报错', a
 test('各引擎上限表齐备（调度层依赖它切批）', () => {
   ['bing-free', 'google-free', 'mymemory', 'deepl', 'openai'].forEach((t) => {
     assert.ok(API[t] && API[t].batch >= 1, '缺少引擎配置：' + t);
+  });
+});
+
+/* ---------- 网络层错误文案 & 返回条数校验 ---------- */
+
+/** 按 URL 关键字路由的 fetch 桩：Bing 要先取 token 再翻译，两次响应形态不同 */
+async function withFetchByUrl(routes, fn) {
+  const prev = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const key = Object.keys(routes).find((k) => String(url).indexOf(k) !== -1);
+    if (!key) throw new Error('测试桩未预置该请求：' + url);
+    const r = routes[key];
+    const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.body);
+    return {
+      ok: r.status ? (r.status >= 200 && r.status < 300) : true,
+      status: r.status || 200,
+      text: async () => body
+    };
+  };
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = prev;
+  }
+}
+
+test('humanFetchError：断网与超时都翻成可执行中文', () => {
+  const net = humanFetchError(new TypeError('Failed to fetch'), 20000);
+  assert.match(net, /无法连接翻译服务/);
+  assert.ok(!/Failed to fetch/.test(net), '浏览器英文原文不该出现在提示里');
+
+  const abort = new Error('The user aborted a request.');
+  abort.name = 'AbortError';
+  assert.match(humanFetchError(abort, 45000), /超时（45 秒无响应）/);
+
+  // 非通用文案（如证书错误）保留原文，便于排障
+  assert.match(humanFetchError(new Error('net::ERR_CERT_AUTHORITY_INVALID'), 20000), /ERR_CERT/);
+});
+
+test('fetchJSON：fetch 抛 TypeError 时不把英文原文抛给用户', async () => {
+  const prev = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  try {
+    await assert.rejects(
+      () => fetchJSON('https://api.x/v1/translate', {}),
+      (e) => {
+        assert.match(e.message, /无法连接翻译服务/);
+        assert.ok(!/Failed to fetch/.test(e.message));
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = prev;
+  }
+});
+
+test('Bing：返回条数少于输入时直接报错（不再让分片错位）', async () => {
+  await withFetchByUrl({
+    'edge.microsoft.com/translate/auth': { body: 'fake-token' },
+    'api-edge.cognitive': { body: [{ translations: [{ text: '甲' }] }] }
+  }, async () => {
+    await assert.rejects(
+      () => callEngine({ type: 'bing-free' }, ['a', 'b'], 'auto', 'zh-CN'),
+      /返回条数与输入不一致（期望 2，实际 1）/
+    );
+  });
+});
+
+test('Bing：缺译文时报错，而不是把原文当译文返回', async () => {
+  await withFetchByUrl({
+    'edge.microsoft.com/translate/auth': { body: 'fake-token' },
+    'api-edge.cognitive': { body: [{ translations: [{ text: '甲' }] }, {}] }
+  }, async () => {
+    await assert.rejects(
+      () => callEngine({ type: 'bing-free' }, ['a', 'b'], 'auto', 'zh-CN'),
+      /返回缺少译文/
+    );
+  });
+});
+
+test('Bing：正常返回等长数组', async () => {
+  await withFetchByUrl({
+    'edge.microsoft.com/translate/auth': { body: 'fake-token' },
+    'api-edge.cognitive': { body: [{ translations: [{ text: '甲' }] }, { translations: [{ text: '乙' }] }] }
+  }, async () => {
+    const out = await callEngine({ type: 'bing-free' }, ['a', 'b'], 'auto', 'zh-CN');
+    assert.deepStrictEqual(out, ['甲', '乙']);
+  });
+});
+
+test('DeepL：返回条数与输入不一致时报错，而不是回退原文', async () => {
+  await withFetch({
+    translations: [{ text: '甲' }]
+  }, 200, async () => {
+    await assert.rejects(
+      () => callEngine({ type: 'deepl', plan: 'free', apiKey: 'k' }, ['a', 'b'], 'auto', 'zh-CN'),
+      /返回条数与输入不一致（期望 2，实际 1）/
+    );
   });
 });

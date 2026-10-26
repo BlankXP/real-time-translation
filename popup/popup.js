@@ -1,5 +1,5 @@
 /* BPFlow — Popup 逻辑 */
-/* global LF, LF_DEFAULTS, LF_MERGE */
+/* global LF, LF_DEFAULTS, LF_MERGE, LF_DOM */
 (() => {
   'use strict';
 
@@ -28,13 +28,8 @@
 
   /* ---------- 与后台通信 ---------- */
 
-  function send(msg) {
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage(msg, (r) => { void chrome.runtime.lastError; resolve(r || null); });
-      } catch (e) { resolve(null); }
-    });
-  }
+  // 转义与消息发送各只有一份实现（shared/dom-utils.js）
+  const { esc, send } = LF_DOM;
 
   async function refreshLiveState() {
     if (window.__LF_PREVIEW__ || !state.tab || state.tab.id == null) return;
@@ -239,12 +234,6 @@
     els.segMode.querySelectorAll('button').forEach((b) => {
       b.addEventListener('click', () => patch({ displayMode: b.dataset.v }));
     });
-  }
-
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
   }
 
   document.addEventListener('DOMContentLoaded', init, { once: true });

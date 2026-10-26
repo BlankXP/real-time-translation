@@ -19,13 +19,39 @@
     'openai':      { batch: 16, maxChars: 6000 }
   };
 
+  /**
+   * 网络层失败的可读化。
+   * fetch 自身失败（断网 / DNS / TLS / 被拦截）抛的是 `TypeError: Failed to fetch`，
+   * 中文用户读不懂；超时则是我们自己 abort 出来的 AbortError —— 两者都不带 HTTP 状态码，
+   * 因此不会被 humanError 覆盖。这里是错误文案链路的最后一层。
+   */
+  function humanFetchError(e, timeoutMs) {
+    const name = (e && e.name) || '';
+    const msg = String((e && e.message) || e || '');
+    if (name === 'AbortError' || /aborted|abort/i.test(msg)) {
+      return '翻译服务响应超时（' + Math.round((Number(timeoutMs) || 20000) / 1000) + ' 秒无响应），请稍后重试或更换引擎';
+    }
+    // Chrome 是 "Failed to fetch"，Firefox 是 "NetworkError when attempting to fetch resource."
+    // 这类通用文案对排障没有额外信息量，不再回显；其它异常（如证书错误）保留原文
+    const generic = /failed to fetch|networkerror|load failed/i.test(msg);
+    return '无法连接翻译服务，请检查网络连接或接口地址是否正确'
+      + ((msg && !generic) ? '（' + msg + '）' : '');
+  }
+
   async function fetchJSON(url, options, timeoutMs) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs || 20000);
+    const limit = timeoutMs || 20000;
+    const timer = setTimeout(() => ctrl.abort(), limit);
     try {
-      const res = await fetch(url, Object.assign({}, options, { signal: ctrl.signal }));
+      let res;
+      let text;
+      try {
+        res = await fetch(url, Object.assign({}, options, { signal: ctrl.signal }));
+        text = await res.text(); // 读 body 期间断网同样是 TypeError，一并收口
+      } catch (e) {
+        throw new Error(humanFetchError(e, limit));
+      }
       let body = null;
-      const text = await res.text();
       try { body = JSON.parse(text); } catch (e) { body = text; }
       if (!res.ok) {
         const err = new Error(humanError(res.status, body));
@@ -78,8 +104,17 @@
       body: JSON.stringify(texts.map((t) => ({ Text: t })))
     });
     if (!Array.isArray(data)) throw new Error('Bing 翻译返回格式异常');
-    return data.map((item, i) => (item && item.translations && item.translations[0] && item.translations[0].text) != null
-      ? item.translations[0].text : texts[i]);
+    // 条数必须严格相等：少一条会让后续分片整体错位，多一条说明服务端把输入拆开了，
+    // 两者都不可信。旧实现只按 data 长度 map，缺项时下游只会得到"没有原因的失败"。
+    if (data.length !== texts.length) {
+      throw new Error('Bing 返回条数与输入不一致（期望 ' + texts.length + '，实际 ' + data.length + '），请重试');
+    }
+    // 缺译文时不再回退成原文：那等于把"没翻"当"翻好了"显示，比报错更难发现
+    return data.map((item) => {
+      const t = item && item.translations && item.translations[0] && item.translations[0].text;
+      if (t == null) throw new Error('Bing 返回缺少译文，请重试');
+      return t;
+    });
   }
 
   /* ---------- Google（免费公共接口，逐句） ---------- */
@@ -120,7 +155,13 @@
       body: JSON.stringify(body)
     });
     if (!data || !Array.isArray(data.translations)) throw new Error('DeepL 返回格式异常');
-    return data.translations.map((t, i) => (t && t.text) || texts[i]);
+    if (data.translations.length !== texts.length) {
+      throw new Error('DeepL 返回条数与输入不一致（期望 ' + texts.length + '，实际 ' + data.translations.length + '），请重试');
+    }
+    return data.translations.map((t) => {
+      if (!t || typeof t.text !== 'string') throw new Error('DeepL 返回缺少译文，请重试');
+      return t.text;
+    });
   }
 
   /* ---------- OpenAI 兼容（自定义模型） ---------- */
@@ -213,5 +254,5 @@
     }
   }
 
-  g.LF_ENGINES = { API, callEngine, fetchJSON, humanError, extractJsonArray, bingToken };
+  g.LF_ENGINES = { API, callEngine, fetchJSON, humanError, humanFetchError, extractJsonArray, bingToken };
 })(globalThis);

@@ -1,7 +1,7 @@
 /* BPFlow — 设置页逻辑 */
 /* global LF, LF_DEFAULTS, LF_MERGE, LF_PRESETS, LF_VOICE_PRESETS,
    LF_BAILIAN_MODELS, LF_BAILIAN_MODEL, LF_MIGRATE_VOICE, LF_MIGRATE_SETTINGS,
-   LF_VALIDATE_SETTINGS, LF_SPLIT_SECRETS, LF_APPLY_SECRETS, LF_MERGE_SECRETS, LF_VALIDATE_ENDPOINT */
+   LF_VALIDATE_SETTINGS, LF_SPLIT_SECRETS, LF_APPLY_SECRETS, LF_MERGE_SECRETS, LF_VALIDATE_ENDPOINT, LF_DOM */
 (() => {
   'use strict';
 
@@ -9,6 +9,9 @@
 
   /* 密钥只存 storage.local，公开设置存 storage.sync（不随 Chrome 账号同步） */
   const SECRET_KEY = 'lf:secrets';
+
+  // 转义与消息发送各只有一份实现（shared/dom-utils.js）
+  const { esc, send } = LF_DOM;
 
   let S = null;            // 当前设置（含密钥，仅供本页编辑使用）
   let editingId = null;    // 正在编辑的引擎 id（null = 新增）
@@ -45,27 +48,32 @@
     S = LF_APPLY_SECRETS(pub, secrets);
   }
 
+  /**
+   * 把当前设置写回存储。
+   * @returns {Promise<boolean>} 是否真的写成功。失败时这里已经 toast 过原因，
+   *   调用方**不要**再显示成功提示，否则用户会以为改动已生效（刷新后丢失）。
+   */
   async function save() {
     const split = LF_SPLIT_SECRETS(S);
     // 以当前表单为权威，直接覆盖写：S 里的 apiKey 在 load() 时已由本地密钥回填过，
     // 因此「为空」就代表用户主动清空了它。若与旧值合并，被清掉的密钥会在下次加载时复活，
     // 用户以为删干净了，后台却仍在用旧 Key 发请求。
-    await chrome.storage.local.set({ [SECRET_KEY]: split.secrets });
-    await chrome.storage.sync.set({ settings: split.pub });
-  }
-
-  function send(msg) {
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage(msg, (r) => { void chrome.runtime.lastError; resolve(r || null); });
-      } catch (e) { resolve(null); }
-    });
-  }
-
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
+    try {
+      await chrome.storage.local.set({ [SECRET_KEY]: split.secrets });
+      await chrome.storage.sync.set({ settings: split.pub });
+      return true;
+    } catch (e) {
+      // 最常见的真实失败：storage.sync 单条 8KB 配额（多个引擎各带长提示词）。
+      // 不接住的话每个 await save() 都变成未捕获的 rejection —— 用户改什么都没反应，
+      // 也没有任何提示。这里不 rethrow：调用点都是 `await save(); render()`，
+      // 抛出去会连渲染一起跳过，界面反而停在半旧状态。
+      const msg = String((e && e.message) || e);
+      toast(/quota/i.test(msg)
+        ? '设置超出浏览器同步配额（单条 8KB）：请精简提示词或减少引擎数量'
+        : '保存失败：' + msg, 'err');
+      console.error('[LF] 保存设置失败', e);
+      return false;
+    }
   }
 
   let toastTimer = null;
@@ -172,7 +180,9 @@
             const first = S.providers.find((x) => x.enabled !== false) || S.providers[0];
             S.activeProviderId = first.id;
           }
-          await save(); renderProviders(); toast('已删除');
+          const saved = await save();
+          renderProviders();
+          if (saved) toast('已删除');
         } else if (act === 'test') {
           testProvider(id, card.querySelector('[data-role="test"]'));
         }
@@ -345,6 +355,10 @@
       };
     }
 
+    // 提交前的快照：写入失败时回滚。否则内存里已经多了一个引擎、存储里没有，
+    // 用户再点一次「保存」会重复添加同一个引擎（id 相同/条目翻倍）。
+    const snapshot = JSON.parse(JSON.stringify(S));
+
     if (editingId) {
       const idx = S.providers.findIndex((p) => p.id === editingId);
       if (idx !== -1) {
@@ -358,7 +372,13 @@
     if (S.providers.filter((p) => p.enabled !== false).length === 1) {
       S.activeProviderId = provider.id;
     }
-    await save();
+    const saved = await save();
+    if (!saved) {
+      // 回滚并留在对话框：用户可以精简提示词后直接重试（save 已弹出失败原因）
+      S = snapshot;
+      renderProviders();
+      return;
+    }
     renderProviders();
     buildLangSelects(); // 引擎变化可能影响提示
     dlg().close();
@@ -442,9 +462,9 @@
     if (allLangs().some((l) => l.code === code)) return toast('该语言已存在', 'err');
     S.customLangs = (S.customLangs || []).concat([{ code, label: code, name }]);
     $('cl-code').value = ''; $('cl-name').value = '';
-    await save();
+    const saved = await save();
     renderCustomLangs(); renderLangChips(); buildLangSelects();
-    toast('已添加 ' + name, 'ok');
+    if (saved) toast('已添加 ' + name, 'ok');
   });
 
   /* ==================== Tab 3: 显示效果 ==================== */
@@ -619,13 +639,26 @@
 
   /* ---------- 导入导出 ---------- */
 
+  /** 导出文件的元信息键：用于告诉导入方「这份文件里到底有没有密钥」 */
+  const EXPORT_META_KEY = '_bpflow';
+
   $('btn-export').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+    const withKeys = !!(($('chk-export-keys') || {}).checked);
+    if (withKeys && !confirm('导出的文件将包含明文 API Key。\n请只在可信设备之间传输，避免经聊天工具 / 邮件 / 网盘转发。\n\n确定继续导出？')) return;
+
+    // 默认剥离密钥：项目在「密钥只存 storage.local、不随账号同步」上做了不少工作，
+    // 导出却把明文 Key 一起写进文件，是最常见的密钥外泄路径。默认与其它出口保持同一水位。
+    const data = withKeys ? S : LF_SPLIT_SECRETS(S).pub;
+    const payload = Object.assign({}, data, {
+      [EXPORT_META_KEY]: { app: 'BPFlow', hasSecrets: withKeys, exportedAt: new Date().toISOString() }
+    });
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'bpflow-settings.json';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    if (!withKeys) toast('已导出（不含 API Key）', 'ok');
   });
 
   $('btn-import').addEventListener('click', () => $('file-import').click());
@@ -638,17 +671,30 @@
         const data = JSON.parse(String(reader.result));
         if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('格式不正确：不是设置对象');
         if (!Array.isArray(data.providers)) throw new Error('格式不正确：缺少 providers 数组');
+        // hasSecrets === false 表示「无密钥导出」。导入时必须保留本机已有密钥，
+        // 否则把一份分享来的预设导入自己浏览器，会顺手清空自己配好的 Key。
+        // 注意：老版本导出的文件没有这个字段，按「含密钥」处理（保持原行为）。
+        const meta = (data[EXPORT_META_KEY] && typeof data[EXPORT_META_KEY] === 'object') ? data[EXPORT_META_KEY] : {};
+        delete data[EXPORT_META_KEY];
+        const keyless = meta.hasSecrets === false;
         // 逐项校验并收敛：脏数值（如 advanced.maxCache = -1）会让后台缓存淘汰死循环卡死 SW
         const checked = LF_VALIDATE_SETTINGS(data);
-        S = checked.settings;
-        await save();
+        S = keyless ? LF_APPLY_SECRETS(checked.settings, await readSecrets()) : checked.settings;
+        const saved = await save();
         renderAll();
         if (checked.fixes.length) {
           console.warn('[LF] 导入时已修正以下异常项：\n' + checked.fixes.join('\n'));
-          toast('设置已导入，已修正 ' + checked.fixes.length + ' 项异常值（详见控制台）', 'ok');
-        } else {
-          toast('设置已导入', 'ok');
         }
+        if (!saved) {
+          // save() 已弹出具体失败原因（多为配额）。这里绝不能再说"已导入"：
+          // 设置只在内存里生效，刷新设置页就没了。
+          console.warn('[LF] 导入的设置未能写入存储，刷新后会丢失');
+          return;
+        }
+        const tips = [];
+        if (checked.fixes.length) tips.push('修正 ' + checked.fixes.length + ' 项异常值（详见控制台）');
+        if (keyless) tips.push('文件不含密钥，已保留本机密钥');
+        toast('设置已导入' + (tips.length ? '：' + tips.join('；') : ''), 'ok');
       } catch (err) {
         toast('导入失败：' + err.message, 'err');
       }
@@ -660,10 +706,11 @@
   $('btn-reset').addEventListener('click', async () => {
     if (!confirm('确定恢复全部默认设置吗？引擎配置与站点规则都会被重置（API Key 将丢失）。')) return;
     S = JSON.parse(JSON.stringify(LF_DEFAULTS));
-    await chrome.storage.local.set({ [SECRET_KEY]: LF_MERGE_SECRETS() }); // 一并清空本地密钥
-    await save();
+    // 不再单独写一次 local：save() 会把「默认设置里的空密钥」一并写进 storage.local
+    // （LF_SPLIT_SECRETS(默认设置).secrets 同样是空结构），少一次不受 save 保护的写入
+    const saved = await save();
     renderAll();
-    toast('已恢复默认设置', 'ok');
+    if (saved) toast('已恢复默认设置', 'ok');
   });
 
   /* ==================== Tab 5: 视频直播 ==================== */

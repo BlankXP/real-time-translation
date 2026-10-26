@@ -294,6 +294,24 @@ function createWavRecorder(stream, tabId, voice, session) {
     pump();
   }
 
+  let recRetries = 0;
+
+  /**
+   * 录音器起不来时不能静默 return：那会让整条直播链路变成哑巴——
+   * 页面显示「正在监听本页声音」，后台 live 状态也成了 true，却一片都录不到。
+   * 上报 + 退避重试；仍失败则明确告知已停用（用户至少知道该刷新页面）。
+   */
+  function failBegin(why) {
+    log(tabId, '录音器启动失败：' + why);
+    if (recRetries < 3) {
+      recRetries++;
+      notice(tabId, 'error', '录音器初始化失败（' + why + '），' + recRetries + '/3 次，3 秒后重试');
+      setTimeout(() => { if (!S.stopped) begin(); }, 3000);
+    } else {
+      notice(tabId, 'error', '录音器无法启动（' + why + '），直播转写已停用；请刷新页面后重新开启');
+    }
+  }
+
   function begin() {
     if (S.stopped) return;
     const beganAt = Date.now(); // 本片录音起点（字幕对齐用）
@@ -301,7 +319,10 @@ function createWavRecorder(stream, tabId, voice, session) {
       rec = mime
         ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64000 })
         : new MediaRecorder(stream);
-    } catch (e) { return; }
+    } catch (e) {
+      failBegin((e && e.message) || String(e));
+      return;
+    }
 
     const parts = [];
     rec.ondataavailable = (e) => { if (e.data && e.data.size) parts.push(e.data); };
@@ -309,7 +330,16 @@ function createWavRecorder(stream, tabId, voice, session) {
       if (parts.length) enqueue(new Blob(parts, { type: mime || 'audio/webm' }), beganAt);
       if (!S.stopped) setTimeout(begin, 120); // 片间极小间隙
     };
-    rec.start();
+    try {
+      rec.start();
+    } catch (e) {
+      // start() 抛错同样要暴露：否则 onstop 永不触发，录音循环就此停摆
+      failBegin((e && e.message) || String(e));
+      return;
+    }
+    // 只有真正录起来才清零重试计数：放在构造成功之后会让「构造成功但 start 一直失败」
+    // 变成无限重试（每轮都清零）
+    recRetries = 0;
     setTimeout(() => {
       try { if (rec.state === 'recording') rec.stop(); } catch (e) { /* noop */ }
     }, 5000);
@@ -583,7 +613,7 @@ async function transcribe(blob, tabId, voice, session) {
     ? base + '/services/aigc/multimodal-generation/generation'
     : base + '/audio/transcriptions';
   log(tabId, '转写请求 → ' + endpoint + '（model=' + (v.model || '(默认)')
-    + '，音频 ' + blob.size + 'B，apiKey=' + (v.apiKey ? '***' + String(v.apiKey).slice(-4) : '无') + '）');
+    + '，音频 ' + blob.size + 'B，apiKey=' + (v.apiKey ? '已配置（' + String(v.apiKey).length + ' 字符）' : '无') + '）');
   try {
     text = (v.protocol === 'dashscope')
       ? await transcribeDashScope(blob, tabId, v, base, ctrl.signal)
@@ -763,6 +793,9 @@ function extractDashScopeText(data) {
 
 function stopCapture(tabId) {
   startingTabs.delete(tabId); // 作废「启动中」的捕获（getUserMedia 返回后自行释放）
+  // 失败计数随会话一起清掉：否则同一标签页重新开启时，首次错误会被 30 秒节流吞掉，
+  // 用户看不到新一轮的第一条报错
+  delete failState[tabId];
   const s = sessions.get(tabId);
   if (!s) return;
   log(tabId, '停止音频捕获，清理会话（中止在途转写 ' + (s.controllers ? s.controllers.size : 0) + ' 个）');

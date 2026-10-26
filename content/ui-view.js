@@ -14,11 +14,8 @@
   /** 快捷面板宽度（与 ui-css 里的 #lf-panel 保持一致） */
   const PANEL_WIDTH = 292;
 
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-  }
+  /** HTML 转义只有一份实现（shared/dom-utils.js），避免各入口各修一版 */
+  const esc = g.LF_DOM.esc;
 
   /** 悬浮球夹到视口内 */
   function clampBall(pos, view, margin) {

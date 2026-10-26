@@ -216,6 +216,8 @@ npm run verify     # = npm run check && npm run lint && npm test
 
 - 浏览器内部页面（`chrome://`、Web Store 等）无法注入内容脚本
 
+- 只翻译顶层文档：内容脚本注入的是 `all_frames: false`，iframe 内的文本不翻译（部分文档站 / 嵌入阅读器把正文放在 iframe 里）。这是有意取舍——若注入所有 frame，每个广告 / 嵌入框都会出现一份悬浮球与视频字幕层
+
 - Google 免费接口为逐句请求，长页面首次翻译耗时略长（有缓存后秒开）
 
 - 视频字幕依赖视频自带 CC（无 CC 时可手动开启语音识别翻译）；Bilibili 字幕 DOM 若改版需更新选择器
