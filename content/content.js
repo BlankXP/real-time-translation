@@ -2,7 +2,7 @@
  * BPFlow — 内容脚本主流程
  * 职责：翻译调度与取消 / 悬浮球与快捷面板（Shadow DOM）/ 划词翻译 / 增量翻译 / 站点规则
  */
-/* global LF, LF_DEFAULTS, LF_MERGE, LF_SCAN, LF_MARKS, LF_UI_CSS, LF_VIEW */
+/* global LF, LF_DEFAULTS, LF_MERGE, LF_SCAN, LF_MARKS, LF_UI_CSS, LF_VIEW, LF_DOM */
 /*
  * 依赖 content/scan.js（LF_SCAN）：文本块扫描与脏块收集
  *      content/marks.js（LF_MARKS）：译文落地
@@ -35,13 +35,8 @@
 
   const normText = LF_SCAN.textOf;
 
-  function send(msg) {
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage(msg, (res) => { void chrome.runtime.lastError; resolve(res || null); });
-      } catch (e) { resolve(null); }
-    });
-  }
+  // 与设置页 / 弹窗共用同一份实现（shared/dom-utils.js）
+  const send = LF_DOM.send;
 
   function chunk(arr, n) {
     const out = [];
@@ -178,23 +173,42 @@
     let anyOk = false;
     let lastError = null;
     const chunks = chunk(uniqueTexts, 16);
+    /*
+     * 窗口式并发：同时保持 LANES 批在途。
+     * 旧实现「一批全部回来才发下一批」，把后台 runPool 的并发能力锁死在单批之内——
+     * 对 batch≥16 的引擎（Bing 20 / DeepL 25 / OpenAI 16）而言一批正好等于一次请求，
+     * 整页耗时等于逐批相加（600 块 ≈ 38 次串行请求）。
+     * 结果仍按批内下标写入同一 resultMap，不存在乱序；取消令牌在每次 await 前后各校验一次。
+     * 车道数不超过用户设置的总并发（并发=1 时退化为原来的完全串行）。
+     */
+    const rawConc = Number(settings.advanced && settings.advanced.concurrency);
+    const conc = Number.isFinite(rawConc) ? Math.max(1, Math.round(rawConc)) : 4;
+    const LANES = Math.min(2, conc);
+    let cursor = 0;
 
-    for (const c of chunks) {
-      if (state.token !== myToken || !state.on) return; // 已取消
-      const r = await send({ type: 'lf:translate', texts: c });
-      if (state.token !== myToken || !state.on) return;
-      if (r && r.ok && Array.isArray(r.results)) {
-        anyOk = true;
-        c.forEach((t, i) => { if (r.results[i] != null) resultMap.set(t, r.results[i]); });
-      } else {
-        lastError = (r && r.error) || '网络错误，无法连接翻译服务';
+    const runLane = async (laneIdx) => {
+      for (;;) {
+        const bi = cursor++;
+        if (bi >= chunks.length) return;
+        if (state.token !== myToken || !state.on) return; // 已取消
+        const c = chunks[bi];
+        // 带上车道下标：后台按「车道数 + 下标」分摊并发额度，奇数并发也不会超限
+        const r = await send({ type: 'lf:translate', texts: c, lanes: LANES, lane: laneIdx });
+        if (state.token !== myToken || !state.on) return;
+        if (r && r.ok && Array.isArray(r.results)) {
+          anyOk = true;
+          c.forEach((t, i) => { if (r.results[i] != null) resultMap.set(t, r.results[i]); });
+        } else {
+          lastError = (r && r.error) || '网络错误，无法连接翻译服务';
+        }
+        done += c.length;
+        if (!silent) {
+          showProgress(Math.min(0.97, 0.05 + 0.92 * (done / uniqueTexts.length)),
+            '翻译中 ' + done + ' / ' + uniqueTexts.length);
+        }
       }
-      done += c.length;
-      if (!silent) {
-        showProgress(Math.min(0.97, 0.05 + 0.92 * (done / uniqueTexts.length)),
-          '翻译中 ' + done + ' / ' + uniqueTexts.length);
-      }
-    }
+    };
+    await Promise.all(new Array(Math.min(LANES, chunks.length)).fill(0).map((v, i) => runLane(i)));
 
     for (const b of list) {
       const t = normText(b);
@@ -226,7 +240,7 @@
     const s = state.settings;
     if (!s || s.displayMode !== 'hover') return;
     const el = e.target && e.target.closest ? e.target.closest('.lf-hoverable') : null;
-    if (el && el.dataset.lfHoverText) showTooltip(el.dataset.lfHoverText, null, el);
+    if (el && el.dataset.lfHoverText) showTooltipFor(el.dataset.lfHoverText, el);
     else hideTooltip();
   }, true);
 
@@ -243,11 +257,10 @@
     const text = sel ? String(sel).trim() : '';
     if (!sel || text.length < 2 || !sel.rangeCount) return;
     const rect = sel.getRangeAt(0).getBoundingClientRect();
-    if (!text || text.length < 2) return;
-    showTooltip('正在翻译…', rect);
+    showTooltipAt('正在翻译…', rect);
     const r = await send({ type: 'lf:translate', texts: [text.slice(0, 1500)] });
-    if (r && r.ok && r.results && r.results[0] != null) showTooltip(r.results[0], rect, 10000);
-    else showTooltip('⚠ ' + ((r && r.error) || '翻译失败'), rect, 5000);
+    if (r && r.ok && r.results && r.results[0] != null) showTooltipAt(r.results[0], rect, 10000);
+    else showTooltipAt('⚠ ' + ((r && r.error) || '翻译失败'), rect, 5000);
   }
 
   /* ============================== Shadow DOM UI ============================== */
@@ -656,18 +669,18 @@
   }
 
   let tipTimer = null;
-  function showTooltip(text, rect, elOrTimeout, maybeTimeout) {
+
+  /**
+   * 在矩形锚点附近显示提示。
+   * @param {string} text
+   * @param {?{left:number,top:number,width:number,height:number}} rect 缺省时在视口上方居中
+   * @param {number} [timeout] 毫秒；不传则常驻，由调用方 hideTooltip
+   */
+  function showTooltipAt(text, rect, timeout) {
     if (!ui) return;
-    let rect0 = rect, timeout = 0;
-    if (elOrTimeout && typeof elOrTimeout !== 'number') {
-      rect0 = elOrTimeout.getBoundingClientRect();
-      timeout = maybeTimeout || 0;
-    } else if (typeof elOrTimeout === 'number') {
-      timeout = elOrTimeout;
-    }
     ui.tip.textContent = text;
     ui.tip.classList.remove('hidden');
-    const r = rect0 || { left: window.innerWidth / 2, top: 100, width: 0, height: 0 };
+    const r = rect || { left: window.innerWidth / 2, top: 100, width: 0, height: 0 };
     const pos = LF_VIEW.tipPosition(
       r,
       { w: ui.tip.offsetWidth, h: ui.tip.offsetHeight },
@@ -678,6 +691,12 @@
     clearTimeout(tipTimer);
     if (timeout) tipTimer = setTimeout(hideTooltip, timeout);
   }
+
+  /** 以元素为锚点显示提示（悬停模式：取块的实时位置，滚动后也贴得住） */
+  function showTooltipFor(text, el, timeout) {
+    showTooltipAt(text, el ? el.getBoundingClientRect() : null, timeout);
+  }
+
   function hideTooltip() {
     if (!ui) return;
     ui.tip.classList.add('hidden');

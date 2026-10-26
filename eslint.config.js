@@ -26,6 +26,7 @@ const LF_GLOBALS = {
   LF_MERGE_SECRETS: 'readonly',
   LF_VALIDATE_ENDPOINT: 'readonly',
   LF_CORE: 'readonly',
+  LF_DOM: 'readonly',
   LF_ENGINES: 'readonly',
   LF_SCAN: 'readonly',
   LF_MARKS: 'readonly',

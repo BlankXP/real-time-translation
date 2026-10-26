@@ -7,7 +7,7 @@
  *      渲染滚动字幕条与「直播翻译中」徽标
  * 覆盖层为类纸风格：浅纸底 + 墨字，视频画面上像贴了一张字幕纸条。
  */
-/* global LF_DEFAULTS, LF_MERGE */
+/* global LF_DEFAULTS, LF_MERGE, LF_DOM */
 (() => {
   'use strict';
   if (!window.chrome || !chrome.runtime || !chrome.runtime.id) return;
@@ -50,13 +50,8 @@
 
   /* ============================== 基础工具 ============================== */
 
-  function send(msg) {
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage(msg, (res) => { void chrome.runtime.lastError; resolve(res || null); });
-      } catch (e) { resolve(null); }
-    });
-  }
+  // 与 content.js / 设置页共用同一份实现（shared/dom-utils.js）
+  const send = LF_DOM.send;
 
   async function loadSettings() {
     // 只取公开设置（不含 apiKey）
@@ -114,7 +109,7 @@
       p = p.parentElement;
     }
     const parent = v.parentElement || document.body;
-    if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+    markPositioned(parent);
     return parent;
   }
 
@@ -364,6 +359,24 @@
     @keyframes lf-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   `;
 
+  /**
+   * 把宿主元素变成定位上下文（覆盖层用 absolute 铺满它），并记住原始内联值。
+   * 之前只改不还原：停用后页面会莫名多出 position:relative，可能改变站点自己的布局。
+   */
+  function markPositioned(el) {
+    if (!el || el === document.body || !el.style) return;
+    if (getComputedStyle(el).position !== 'static') return;
+    if (el.__lfPrevPos === undefined) el.__lfPrevPos = el.style.position || '';
+    el.style.position = 'relative';
+  }
+
+  /** 还原 markPositioned 的改动；只在值仍是「我们设的那个」时回写，不覆盖页面后续改动 */
+  function unmarkPositioned(el) {
+    if (!el || !el.style || el.__lfPrevPos === undefined) return;
+    if (el.style.position === 'relative') el.style.position = el.__lfPrevPos;
+    delete el.__lfPrevPos;
+  }
+
   function ensureOverlay(anchor, fixed) {
     if (state.ui && state.ui.host.isConnected) return state.ui;
     document.querySelectorAll('#lf-video-host').forEach((n) => n.remove());
@@ -393,7 +406,7 @@
     `;
 
     state.anchor = anchor;
-    if (!fixed && getComputedStyle(anchor).position === 'static') anchor.style.position = 'relative';
+    if (!fixed) markPositioned(anchor);
     anchor.appendChild(host);
 
     state.ui = {
@@ -746,12 +759,26 @@
     }
   }
 
+  /**
+   * 追加队列上限（片）。MSE 永久性失败（编码器异常 / 资源耗尽）时，appendBuffer 每轮只
+   * 退一片、ondataavailable 却每秒灌一片，队列（每片 ~0.5-1MB）会无限膨胀。
+   * 超限即熔断画面同步 —— 保住声音与字幕，好过把整个标签页拖到 OOM。
+   */
+  const SYNC_APPEND_MAX = 30;
+
   /** 定时泵：放行滞留满 N 秒的分片进 MSE（150ms 间隔，降低一次放行多片的突发） */
   function pumpSyncQueue() {
     if (!sync.active) return;
     const now = Date.now();
     while (sync.queue.length && now - sync.queue[0].at >= sync.delayMs) {
       sync.appendQueue.push(sync.queue.shift().data);
+    }
+    if (sync.appendQueue.length > SYNC_APPEND_MAX) {
+      console.warn('[LF-SYNC] 追加队列积压 ' + sync.appendQueue.length + ' 片，判定 MSE 已不可用，停用画面同步');
+      // 提示失败也必须保证熔断先发生，否则这个 150ms 定时器会一直重复抛错
+      try { renderLiveLine('画面同步已停用（视频解码异常）；字幕不受影响，声音延迟仍生效', null, false, true); } catch (e) { /* noop */ }
+      stopSyncVideo();
+      return;
     }
     drainSyncAppends();
   }
@@ -1062,7 +1089,12 @@
     restoreNativeCaptions();
     state.lastOrig = '';
     // 直播进行中时保留覆盖层（徽标/滚动字幕还在用）
-    if (state.ui && !state.live) { state.ui.host.remove(); state.ui = null; state.anchor = null; }
+    if (state.ui && !state.live) {
+      state.ui.host.remove();
+      state.ui = null;
+      unmarkPositioned(state.anchor); // 撤掉我们给宿主加的 position
+      state.anchor = null;
+    }
   }
 
   function applyEnabled() {

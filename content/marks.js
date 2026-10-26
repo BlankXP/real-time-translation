@@ -27,7 +27,7 @@
 
   /** 设置里的样式变了：给页面上已有的译文重新上样式 */
   function reapplyStyles(doc, settings) {
-    doc.querySelectorAll('lf-translation.lf-translation').forEach((el) => applyStyleTo(el, settings));
+    doc.querySelectorAll('lf-translation').forEach((el) => applyStyleTo(el, settings));
   }
 
   /**

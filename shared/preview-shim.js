@@ -58,7 +58,7 @@
     },
     runtime: {
       id: 'preview',
-      getManifest: () => ({ version: '1.2.1', name: 'BPFlow 实时翻译（预览）' }),
+      getManifest: () => ({ version: '1.3.0', name: 'BPFlow 实时翻译（预览）' }),
       openOptionsPage: () => { location.href = '../options/options.html'; },
       sendMessage: (msg, cb) => { if (typeof cb === 'function') cb(null); return Promise.resolve(null); },
       onMessage: { addListener() { /* noop */ } },

@@ -366,7 +366,7 @@
         <div class="card" data-page-node-id="NQJqiGrIqdjpA6ArGLXt4t">
           <div class="card-title" data-page-node-id="f4hmRSzqeyd4PDmFqWQdJE">数据管理</div>
           <div class="row-between" data-page-node-id="Zr1KlUkyiz6oH8jfADYasG">
-            <span class="hint" style="margin:0" data-page-node-id="GtOysN5a3GuAKCmaoTIbst">导出 / 导入全部设置（含引擎配置，API Key 请自行注意保密）</span>
+            <span class="hint" style="margin:0" data-page-node-id="GtOysN5a3GuAKCmaoTIbst">导出 / 导入设置（默认<b>不含</b> API Key，可安全分享预设或发给他人排障）</span>
             <div class="row" style="gap:8px" data-page-node-id="1A26IhMOH0mCMfnEVKF2ow">
               <button class="btn ghost" id="btn-export" data-page-node-id="VbylDsPL7pEjT2xB0TniPy">导出设置</button>
               <button class="btn ghost" id="btn-import" data-page-node-id="tMwOISlsQPrzpE2uERPo44">导入设置</button>
@@ -374,6 +374,10 @@
               <input type="file" id="file-import" accept="application/json" class="hidden" data-page-node-id="QV7ITqOC4G27EIzHbVAkEm">
             </div>
           </div>
+          <label class="check-row" style="margin-top:10px">
+            <input type="checkbox" id="chk-export-keys">
+            <span>导出时包含 API Key（<b>明文</b>，仅限可信设备之间传输；勾选后会二次确认）</span>
+          </label>
         </div>
 
         <div class="card about" data-page-node-id="gouRc3zmMNiaYRDS8urmEv">
@@ -478,6 +482,7 @@
 
   <script src="../shared/langs.js"></script>
   <script src="../shared/defaults.js"></script>
+  <script src="../shared/dom-utils.js"></script>
   <script src="../shared/preview-shim.js"></script>
   <script src="options.js"></script>
 </body>

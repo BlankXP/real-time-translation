@@ -168,3 +168,65 @@ test('接口地址：IPv6 回环与 ULA 放行，公网地址拒绝', () => {
   assert.strictEqual(LF_VALIDATE_ENDPOINT('http://[fe80::1]:8080/v1').ok, true);
   assert.strictEqual(LF_VALIDATE_ENDPOINT('http://[2001:db8::1]/v1').ok, false);
 });
+
+/* ---------- 导出 / 导入：默认剥离密钥后仍可完整还原 ---------- */
+
+/** 模拟一份"用户自己的完整设置"（含引擎与语音密钥） */
+function fullSettingsWithKeys() {
+  const s = clone(D);
+  s.providers = [
+    { id: 'p1', type: 'openai', name: 'AI 模型', enabled: true, baseUrl: 'https://api.x/v1', model: 'm', apiKey: 'sk-SECRET-1', temperature: 0.1, promptTemplate: '' },
+    { id: 'p2', type: 'deepl', name: 'DeepL', enabled: true, apiKey: 'deepl-SECRET-2', plan: 'free' }
+  ];
+  s.activeProviderId = 'p1';
+  s.voice = LF_MIGRATE_VOICE({
+    engine: 'bailian',
+    bailian: { model: 'fun-asr-flash-2026-06-15', apiKey: 'sk-VOICE-KEY' },
+    openai: { baseUrl: '', model: '', apiKey: '' }
+  });
+  return s;
+}
+
+test('默认导出：文件里不含任何密钥（引擎与语音都要剥离）', () => {
+  const full = fullSettingsWithKeys();
+  const pub = LF_SPLIT_SECRETS(full).pub;
+  const text = JSON.stringify(pub);
+
+  assert.ok(!text.includes('sk-SECRET-1'));
+  assert.ok(!text.includes('deepl-SECRET-2'));
+  assert.ok(!text.includes('sk-VOICE-KEY'));
+  assert.strictEqual(pub.providers[0].apiKey, undefined);
+  assert.strictEqual(pub.voice.bailian.apiKey, undefined);
+  // 非密钥字段必须原样保留，否则"分享预设"就没意义了
+  assert.strictEqual(pub.providers[0].baseUrl, 'https://api.x/v1');
+  assert.strictEqual(pub.providers[1].plan, 'free');
+  assert.strictEqual(pub.voice.bailian.model, 'fun-asr-flash-2026-06-15');
+});
+
+test('无密钥文件导入：本机已有密钥被保留（不会被一次导入清空）', () => {
+  const pub = LF_SPLIT_SECRETS(fullSettingsWithKeys()).pub;
+  // 导入端顺序：先校验收敛，再按需把本机密钥合并回来
+  const checked = LF_VALIDATE_SETTINGS(clone(pub));
+  const local = { providers: { p1: 'sk-SECRET-1', p2: 'deepl-SECRET-2' }, voice: { bailian: 'sk-VOICE-KEY', openai: '' } };
+  const merged = LF_APPLY_SECRETS(checked.settings, local);
+
+  assert.strictEqual(merged.providers[0].apiKey, 'sk-SECRET-1');
+  assert.strictEqual(merged.providers[1].apiKey, 'deepl-SECRET-2');
+  assert.strictEqual(merged.voice.bailian.apiKey, 'sk-VOICE-KEY');
+});
+
+test('含密钥的旧文件导入：以文件为准（不依赖本机残留）', () => {
+  const full = fullSettingsWithKeys();
+  const checked = LF_VALIDATE_SETTINGS(clone(full));
+  assert.strictEqual(checked.settings.providers[0].apiKey, 'sk-SECRET-1', '文件里的密钥要跟着走');
+  assert.strictEqual(checked.settings.voice.bailian.apiKey, 'sk-VOICE-KEY');
+});
+
+test('无密钥文件导入到全新配置：不会凭空生出密钥', () => {
+  const pub = LF_SPLIT_SECRETS(fullSettingsWithKeys()).pub;
+  const checked = LF_VALIDATE_SETTINGS(clone(pub));
+  const merged = LF_APPLY_SECRETS(checked.settings, { providers: {}, voice: {} });
+  // 空缺可能表现为 undefined 或被迁移函数归一成 ''，都算"没有密钥"
+  assert.ok(!merged.providers[0].apiKey, '引擎不应有密钥');
+  assert.ok(!merged.voice.bailian.apiKey, '语音引擎不应有密钥');
+});

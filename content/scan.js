@@ -75,15 +75,31 @@
   }
 
   /**
+   * 块是否可用（可见 + 长度合格）。
+   * 先查 getClientRects 再查 computedStyle：被 display:none 祖先隐藏的块两者都会判否，
+   * 但前者便宜得多，能省掉大量样式解析。
+   */
+  function isUsableBlock(b) {
+    try {
+      if (!b.isConnected) return false;
+      if (!b.getClientRects().length) return false;
+      const st = getComputedStyle(b);
+      if (st.display === 'none' || st.visibility === 'hidden') return false;
+      return textOf(b).length <= MAX_BLOCK_CHARS;
+    } catch (e) { return false; } // 节点可能已脱离文档
+  }
+
+  /**
    * 扫描可翻译块。
    * @param {{minLen?: number, limit?: number, root?: Element}} [opts]
-   *   minLen 最小文本长度；limit 收够这么多块就停止遍历（大页面不必白扫整棵 DOM）；
+   *   minLen 最小文本长度；limit 收够这么多「可见」块就停止遍历（大页面不必白扫整棵 DOM）；
    *   root 只扫这个子树
    * @returns {Element[]} 文档顺序的叶子块
    */
   function getUnits(opts) {
     const o = opts || {};
     const minLen = Math.max(1, Number(o.minLen) || 2);
+    const limit = Math.max(0, Math.round(Number(o.limit) || 0));
     const scope = o.root || document.body;
     if (!scope) return [];
 
@@ -98,26 +114,28 @@
     });
 
     const memo = new Map();   // 只在本次扫描内有效，DOM 同步遍历期间不会变
-    const blocks = new Map(); // 保持文档顺序
-    const cap = o.limit ? o.limit * 2 + 8 : 0; // 后面还要过滤不可见/超长块，留点余量
+    const seen = new Set();   // 已考察过的块（含不可见的），避免重复判可见性
+    const out = [];
+    /*
+     * 边遍历边过滤，而不是「先收 limit*2+8 个块、再统一过滤」。
+     * 旧写法在不可见块占比高时（折叠面板、隐藏 tab、aria-hidden 骨架屏）收集阶段就被
+     * 不可见块占满名额 → 结果永远达不到 limit；而文档顺序每次都一样，于是每次重翻
+     * 漏掉的都是同一批块（不是运气问题，是稳定的漏翻）。
+     * 这里改为给「考察数」设上限，兼顾大页面的扫描成本。
+     */
+    const ceiling = limit ? limit * 4 + 64 : 0;
+    let examined = 0;
     let node;
     while ((node = walker.nextNode())) {
       const block = findBlockAncestor(node.parentElement, memo);
-      if (block && !blocks.has(block)) {
-        blocks.set(block, true);
-        if (cap && blocks.size >= cap) break;
+      if (!block || seen.has(block)) continue;
+      seen.add(block);
+      examined++;
+      if (isUsableBlock(block)) {
+        out.push(block);
+        if (limit && out.length >= limit) break;
       }
-    }
-
-    const out = [];
-    for (const b of blocks.keys()) {
-      try {
-        const st = getComputedStyle(b);
-        if (st.display === 'none' || st.visibility === 'hidden') continue;
-        if (!b.getClientRects().length) continue;
-        if (textOf(b).length > MAX_BLOCK_CHARS) continue;
-        out.push(b);
-      } catch (e) { /* 节点可能已脱离文档 */ }
+      if (ceiling && examined >= ceiling) break;
     }
     return out;
   }
@@ -163,6 +181,7 @@
     textOf,
     isSkipped,
     isTranslatableBlock,
+    isUsableBlock,
     findBlockAncestor,
     getUnits,
     collectLeafBlocks

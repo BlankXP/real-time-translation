@@ -149,3 +149,94 @@ test('行内回溯分支同样遵守上限', () => {
   assert.strictEqual(dirty.size, 2);
   assert.strictEqual(dirty.has(span.parentElement), false, '集合已满时不能再把段落塞进去');
 });
+
+/* ---------- 整页扫描：不可见块不得挤掉后续块（曾稳定漏翻后半页） ---------- */
+
+globalThis.NodeFilter = { SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 };
+
+function fakeBlock(text, visible) {
+  return {
+    tagName: 'P',
+    isConnected: true,
+    isContentEditable: false,
+    attributes: {},
+    childNodes: [],
+    parentElement: null,
+    textContent: text,
+    matches: () => false,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    closest: () => null,
+    getClientRects: () => (visible ? [{ width: 10, height: 10 }] : [])
+  };
+}
+
+/** 极简 document：TreeWalker 只是把预先排好的文本节点按顺序吐出来 */
+function withDoc(blocks, fn) {
+  const prevDoc = globalThis.document;
+  const prevStyle = globalThis.getComputedStyle;
+  const texts = blocks.map((b) => ({ nodeType: 3, nodeValue: b.textContent, parentElement: b }));
+  blocks.forEach((b, i) => { b.childNodes = [texts[i]]; });
+
+  globalThis.document = {
+    body: { tagName: 'BODY' },
+    documentElement: { tagName: 'HTML' },
+    createTreeWalker(scope, what, filter) {
+      let i = 0;
+      return {
+        nextNode() {
+          while (i < texts.length) {
+            const n = texts[i++];
+            if (filter.acceptNode(n) === 1) return n;
+          }
+          return null;
+        }
+      };
+    }
+  };
+  globalThis.getComputedStyle = () => ({ display: 'block', visibility: 'visible' });
+  try {
+    return fn();
+  } finally {
+    globalThis.document = prevDoc;
+    globalThis.getComputedStyle = prevStyle;
+  }
+}
+
+test('整页扫描：不可见块不再挤掉后面的块', () => {
+  const blocks = [];
+  for (let i = 0; i < 20; i++) blocks.push(fakeBlock('text ' + i, i >= 15));
+  // 旧实现先收 limit*2+8 个候选再统一过滤：18 个候选里只有 3 个可见 → 只返回 3 个，
+  // 而且每次重翻顺序一样，漏的永远是同一批
+  const got = withDoc(blocks, () => globalThis.LF_SCAN.getUnits({ limit: 5 }));
+  assert.deepStrictEqual(got.map((b) => b.textContent),
+    ['text 15', 'text 16', 'text 17', 'text 18', 'text 19']);
+});
+
+test('整页扫描：全部可见时按文档顺序取前 limit 个', () => {
+  const blocks = [];
+  for (let i = 0; i < 12; i++) blocks.push(fakeBlock('text ' + i, true));
+  const got = withDoc(blocks, () => globalThis.LF_SCAN.getUnits({ limit: 5 }));
+  assert.deepStrictEqual(got.map((b) => b.textContent),
+    ['text 0', 'text 1', 'text 2', 'text 3', 'text 4']);
+});
+
+test('整页扫描：全是不可见块时也有考察上限，不会白扫整棵树', () => {
+  let calls = 0;
+  const blocks = [];
+  for (let i = 0; i < 400; i++) {
+    const b = fakeBlock('text ' + i, false);
+    b.getClientRects = () => { calls++; return []; };
+    blocks.push(b);
+  }
+  const got = withDoc(blocks, () => globalThis.LF_SCAN.getUnits({ limit: 5 }));
+  assert.strictEqual(got.length, 0);
+  // ceiling = limit*4 + 64：不能因为找不到可见块就把整棵树走完
+  assert.ok(calls <= 5 * 4 + 64, '考察块数应受上限约束，实际 ' + calls);
+});
+
+test('整页扫描：不传 limit 时返回全部可见块', () => {
+  const blocks = [fakeBlock('a block', true), fakeBlock('b block', false), fakeBlock('c block', true)];
+  const got = withDoc(blocks, () => globalThis.LF_SCAN.getUnits({}));
+  assert.deepStrictEqual(got.map((b) => b.textContent), ['a block', 'c block']);
+});

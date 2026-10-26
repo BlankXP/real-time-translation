@@ -8,7 +8,7 @@
 importScripts('../shared/langs.js', '../shared/defaults.js', '../shared/translate-core.js', 'engines.js');
 /* 注：MV3 Service Worker 默认严格模式 */
 
-const { cacheKey, chunkTexts, splitLongText, joinParts } = LF_CORE;
+const { cacheKey, chunkTexts, splitLongText, laneConcurrency, assembleResults } = LF_CORE;
 
 /* ============================== 设置 ============================== */
 
@@ -113,14 +113,24 @@ async function flushCache() {
 
 /* ============================== 批量调度 ============================== */
 
-/** 并发池执行 */
+/**
+ * 并发池执行。
+ * 任务级错误隔离：单个任务抛错只留一个 null 槽位，绝不让 worker 提前退出、
+ * 更不能让 Promise.all 整池 reject —— 否则「一个分片 4xx」会把同批其余分片的结果全丢掉。
+ * 调用方必须按 `if (!r)` 判空（见 translateTexts 的回填循环）。
+ */
 async function runPool(tasks, limit) {
   const results = new Array(tasks.length);
   let idx = 0;
   const workers = new Array(Math.min(limit, tasks.length)).fill(0).map(async () => {
     while (idx < tasks.length) {
       const i = idx++;
-      results[i] = await tasks[i]();
+      try {
+        results[i] = await tasks[i]();
+      } catch (e) {
+        results[i] = null;
+        console.log('[LF-BG] 并发任务失败（槽位 ' + i + '）：' + ((e && e.message) || String(e)));
+      }
     }
   });
   await Promise.all(workers);
@@ -131,7 +141,10 @@ async function runPool(tasks, limit) {
  * 核心翻译入口
  * @param {string[]} texts
  * @param {?object} overrideProvider 指定引擎（「测试连接」用）
- * @param {{bypassCache?: boolean}} [opts] bypassCache：测试连接必须绕缓存，否则会假成功
+ * @param {{bypassCache?: boolean, lanes?: number, lane?: number}} [opts]
+ *   bypassCache：测试连接必须绕缓存，否则会假成功
+ *   lanes / lane：调用方同时在途的批数与本请求所在车道（内容脚本窗口并发）。
+ *   总并发按车道分摊，避免峰值翻倍
  * @returns {Promise<{ok:boolean, results:?string[], error:?string, stats:object}>}
  */
 async function translateTexts(texts, overrideProvider, opts) {
@@ -145,6 +158,9 @@ async function translateTexts(texts, overrideProvider, opts) {
   const target = settings.targetLang || 'zh-CN';
   const api = LF_ENGINES.API[prov.type] || { batch: 10 };
   const concurrency = Math.max(1, Math.min(8, settings.advanced.concurrency || 4));
+  // 单请求内部并发 = 全局并发 / 在途车道数（内容脚本一次只发一批时 lanes=1，行为与旧版一致）
+  // lane 是该请求所在的车道下标：余数分给前几条车道，保证各车道之和恰好等于用户设置值
+  const perLane = laneConcurrency(concurrency, opts && opts.lanes, opts && opts.lane);
 
   const useCache = !(opts && opts.bypassCache) && settings.advanced.cacheEnabled !== false;
   const cache = useCache ? await loadCache() : null;
@@ -166,12 +182,12 @@ async function translateTexts(texts, overrideProvider, opts) {
 
   let fetched = 0, failed = 0;
   if (needIdx.length) {
-    // 超长文本先按句切分，再按 (原文下标, 第几片) 记账
+    // 超长文本先按句切分，再按 (待翻文本下标, 第几片) 记账
     const units = [];
-    needIdx.forEach((origIdx) => {
+    needIdx.forEach((origIdx, pos) => {
       const t = texts[origIdx];
       const parts = (api.maxChars && t.length > api.maxChars) ? splitLongText(t, api.maxChars) : [t];
-      parts.forEach((p, pi) => units.push({ idx: origIdx, part: pi, total: parts.length, text: p }));
+      parts.forEach((p, pi) => units.push({ idx: pos, part: pi, total: parts.length, text: p }));
     });
     const chunks = chunkTexts(units.map((u) => u.text), api.batch, api.maxChars);
 
@@ -182,47 +198,28 @@ async function translateTexts(texts, overrideProvider, opts) {
       } catch (e) {
         return { ok: false, error: e && e.message ? e.message : String(e) };
       }
-    }), prov.type === 'openai' ? Math.min(2, concurrency) : concurrency);
+    }), prov.type === 'openai' ? Math.min(2, perLane) : perLane);
 
-    // 逐片回填，再按原文聚合：chunks[i] 与 chunkResults[i] 一一对应，units 顺序同 chunks 展开
-    const bags = new Map();
-    let firstError = null;
-    let cursor = 0;
-    chunkResults.forEach((r, ci) => {
-      const n = chunks[ci].length;
-      for (let k = 0; k < n; k++) {
-        const u = units[cursor + k];
-        let bag = bags.get(u.idx);
-        if (!bag) {
-          bag = { parts: new Array(u.total).fill(null), total: u.total, broken: false };
-          bags.set(u.idx, bag);
-        }
-        if (r.ok) {
-          const val = r.out[k] != null ? r.out[k] : null;
-          if (val == null) bag.broken = true;
-          else bag.parts[u.part] = val;
-        } else {
-          bag.broken = true;
-          if (!firstError) firstError = r.error;
-        }
-      }
-      cursor += n;
+    // 汇编（长文多片聚合、任一片缺失即判废）在纯函数里，见 shared/translate-core.js
+    const asm = assembleResults({
+      units,
+      chunkSizes: chunks.map((c) => c.length),
+      chunkResults,
+      count: needIdx.length
     });
+    fetched = asm.fetched;
+    failed = asm.failed;
 
-    needIdx.forEach((origIdx) => {
-      const bag = bags.get(origIdx);
-      const complete = bag && !bag.broken && bag.parts.every((p) => p != null);
-      if (!complete) { results[origIdx] = null; failed++; return; }
-      const val = bag.total > 1 ? joinParts(bag.parts) : bag.parts[0];
+    needIdx.forEach((origIdx, pos) => {
+      const val = asm.values[pos];
       results[origIdx] = val;
-      fetched++;
       // 切分后的原文整体入缓存：同一段长文下次直接命中，不再重复切分请求
-      if (cache) cache.set(cacheKey(prov, source, target, texts[origIdx]), val);
+      if (val != null && cache) cache.set(cacheKey(prov, source, target, texts[origIdx]), val);
     });
 
     if (cache && fetched) scheduleCacheSave();
-    if (fetched === 0 && firstError) {
-      return { ok: false, error: firstError, results: null };
+    if (fetched === 0 && asm.firstError) {
+      return { ok: false, error: asm.firstError, results: null };
     }
   }
 
@@ -393,7 +390,9 @@ async function startLiveForTabInner(tabId) {
   liveLog(tabId, '开始启动直播翻译：转写引擎 ' + (voice.engine === 'bailian' ? '阿里云百炼' : 'OpenAI 兼容')
     + ' ' + (voice.baseUrl || '(未配置)')
     + '，protocol=' + (voice.protocol || 'openai') + '，model=' + (voice.model || '(默认)')
-    + '，apiKey=' + (voice.apiKey ? '***' + String(voice.apiKey).slice(-4) : '未填写'));
+    // 日志会经 lf:liveLog 转发到直播页 console：不打印 Key 的任何片段，
+    // 只要「有没有配 / 多长」就够定位问题（用户截图排障时不会顺带泄露末四位）
+    + '，apiKey=' + (voice.apiKey ? '已配置（' + String(voice.apiKey).length + ' 字符）' : '未填写'));
   if (!voice.baseUrl) {
     liveLog(tabId, '启动中止：未配置转写引擎 baseUrl');
     return { ok: false, error: '请先在 设置 → 视频直播 中配置语音转写引擎' };
@@ -514,9 +513,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case 'lf:translate': {
           const texts = (msg.texts || []).filter((t) => typeof t === 'string' && t.trim());
           if (!texts.length) return sendResponse({ ok: true, results: [], stats: { total: 0 } });
-          if (texts.length > 2000) texts.length = 2000;
-          const r = await translateTexts(texts);
-          sendResponse(r);
+          // 防御性截断（内容脚本单批最多 16 条，正常到不了）：真被截断要在响应里说明，
+          // 否则调用方会以为「整批都翻完了」
+          const truncated = texts.length > 2000;
+          if (truncated) texts.length = 2000;
+          // 内容脚本用窗口并发时一次会有多批在飞：按车道数分摊池大小，
+          // 保证总并发仍是用户在「高级设置」里选的那个值（否则会被放大成 N 倍）
+          const r = await translateTexts(texts, null, { lanes: msg.lanes, lane: msg.lane });
+          sendResponse(truncated ? Object.assign({}, r, { truncated: true }) : r);
           break;
         }
         case 'lf:getSettings': {

@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { loadShared } = require('./helpers');
 
+loadShared('shared/dom-utils.js'); // ui-view 的 esc 复用这里的实现
 loadShared('content/ui-view.js');
 const { clampBall, panelPosition, tipPosition, selBarPosition, targetOptions, esc, BALL_SIZE, PANEL_WIDTH } = globalThis.LF_VIEW;
 
